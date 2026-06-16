@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% set active_step = 3 %}
+{% block title %}Chọn bảng — Odoo DB Compare{% endblock %}
+{% block subheader %}{% include "partials/_stepper.html" %}{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-[28px] font-normal tracking-tight text-ink">Chọn bảng để compare</h1>
+  <p class="mt-2 text-sm text-body">{{ job.estimates|length }} bảng có ở cả 2 DB · row estimate từ <span class="mono text-ink">pg_class.reltuples</span> · mode auto-suggest, có thể override.</p>
+</div>
+
+<form method="post" action="/jobs/{{ job.id }}/compare">
+  <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-wrap gap-2">
+      <button type="button" class="chip" data-act="all">Select All</button>
+      <button type="button" class="chip" data-act="custom">Custom Only</button>
+      <button type="button" class="chip" data-act="base">Base Only</button>
+      <button type="button" class="chip" data-act="clear">Clear</button>
+    </div>
+    <div class="relative">
+      <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="table-search" type="search" placeholder="Tìm theo tên bảng…" autocomplete="off"
+             class="input mono" style="height:38px; width:260px; padding-left:34px;" />
+    </div>
+  </div>
+
+  <div class="mb-5 flex flex-wrap items-center gap-2">
+    <span class="text-xs text-muted">Set mode cho bảng đã chọn:</span>
+    <button type="button" class="chip" data-mode="full">Full</button>
+    <button type="button" class="chip" data-mode="intersection">Intersection</button>
+    <button type="button" class="chip" data-mode="count-only">Count-only</button>
+  </div>
+
+  <div class="card overflow-hidden mb-28">
+    <div class="table-scroll">
+      <table class="w-full border-collapse">
+        <thead>
+          <tr>
+            <th class="th w-10"><input type="checkbox" id="check-all" class="h-4 w-4 rounded-sm border-hairline accent-ink" checked></th>
+            <th class="th">Table</th>
+            <th class="th text-right">{{ job.label_a }}</th>
+            <th class="th text-right">{{ job.label_b }}</th>
+            <th class="th text-right">Δ rows</th>
+            <th class="th">Schema</th>
+            <th class="th">Mode</th>
+            <th class="th text-right">Est. time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in job.estimates.values() %}
+          {% set sd = job.schema_tables[e.name] %}
+          {% set delta = e.rows_b - e.rows_a %}
+          {% set big = (e.rows_a > 1000000 or e.rows_b > 1000000) %}
+          <tr class="rowx" data-custom="{{ '1' if sd.is_custom else '0' }}" data-name="{{ e.name|lower }}">
+            <td class="td"><input type="checkbox" name="select" value="{{ e.name }}" class="row-select h-4 w-4 rounded-sm border-hairline accent-ink" checked></td>
+            <td class="td">
+              <span class="mono font-medium text-ink">{{ e.name }}</span>
+              {% if sd.is_custom %}<span class="tag tag-ink ml-1.5">custom</span>{% endif %}
+            </td>
+            <td class="td text-right mono tabular-nums text-body">{{ "{:,}".format(e.rows_a) }}</td>
+            <td class="td text-right mono tabular-nums text-body">{{ "{:,}".format(e.rows_b) }}</td>
+            <td class="td text-right mono tabular-nums {{ 'font-medium text-coral' if delta != 0 else 'text-borderStrong' }}">
+              {{ '+' if delta > 0 else '' }}{{ "{:,}".format(delta) }}
+            </td>
+            <td class="td">
+              {% if sd.status == 'changed' %}<span class="tag tag-warn">changed</span>
+              {% else %}<span class="tag tag-ok">identical</span>{% endif %}
+            </td>
+            <td class="td">
+              <select name="mode_{{ e.name }}" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="{{ [e.rows_a, e.rows_b]|max }}">
+                {% for m in ['full', 'intersection', 'count-only'] %}
+                <option value="{{ m }}" {{ 'selected' if m == e.suggested_mode else '' }}>{{ m }}</option>
+                {% endfor %}
+              </select>
+              {% if not e.has_id %}<span class="block text-[10px] text-muted">no id → composite key</span>{% endif %}
+            </td>
+            <td class="td text-right mono text-xs text-muted est-cell">—</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-canvas">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-4 px-6 py-3.5">
+      <div class="text-sm text-body">
+        <span class="font-medium text-ink" id="sel-count">0</span> bảng đã chọn ·
+        tổng est. ≈ <span class="font-medium text-ink mono" id="sel-time">0s</span>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">
+        Run Compare
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</form>
+
+<script>
+  function estOne(mode, rows) { return mode === 'count-only' ? 0.5 : 1.0 + rows / 80000; }
+  function fmtTime(s) {
+    if (s < 60) return Math.round(s) + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+    return Math.floor(s / 3600) + 'h ' + Math.round((s % 3600) / 60) + 'm';
+  }
+  function recompute() {
+    let count = 0, total = 0;
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.row-select');
+      const sel = tr.querySelector('.mode-select');
+      const cell = tr.querySelector('.est-cell');
+      const rows = sel ? parseInt(sel.dataset.rows || '0', 10) : 0;
+      const mode = sel ? sel.value : 'count-only';
+      const t = estOne(mode, rows);
+      const warn = (rows > 1000000) ? '⚠ ' : '';
+      cell.innerHTML = cb.checked ? warn + fmtTime(t) : '<span class="text-borderStrong">skip</span>';
+      if (cb.checked) { count++; total += t; }
+    });
+    document.getElementById('sel-count').textContent = count;
+    document.getElementById('sel-time').textContent = fmtTime(total);
+  }
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('.row-select, .mode-select')) recompute();
+    if (e.target.id === 'check-all') {
+      document.querySelectorAll('.row-select').forEach(cb => cb.checked = e.target.checked);
+      recompute();
+    }
+  });
+  document.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.row-select');
+      const isCustom = tr.dataset.custom === '1';
+      if (act === 'all') cb.checked = true;
+      else if (act === 'clear') cb.checked = false;
+      else if (act === 'custom') cb.checked = isCustom;
+      else if (act === 'base') cb.checked = !isCustom;
+    });
+    recompute();
+  }));
+
+  // Set mode hàng loạt cho các bảng đang được chọn (chỉ bảng có id / có dropdown)
+  document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', () => {
+    const mode = btn.dataset.mode;
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.row-select');
+      const sel = tr.querySelector('.mode-select');
+      if (cb && cb.checked && sel && !sel.disabled) sel.value = mode;
+    });
+    recompute();
+  }));
+
+  // Search theo tên bảng (ẩn dòng không khớp, vẫn giữ trạng thái selected)
+  document.getElementById('table-search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      tr.style.display = (q === '' || tr.dataset.name.includes(q)) ? '' : 'none';
+    });
+  });
+
+  recompute();
+</script>
+{% endblock %}

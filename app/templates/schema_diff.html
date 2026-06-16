@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% set active_step = 2 %}
+{% block title %}Schema diff — Odoo DB Compare{% endblock %}
+{% block subheader %}{% include "partials/_stepper.html" %}{% endblock %}
+
+{% block content %}
+{% set counts = {'changed': 0, 'new': 0, 'dropped': 0, 'identical': 0} %}
+{% for t in job.schema_tables.values() %}{% if counts.update({t.status: counts[t.status] + 1}) %}{% endif %}{% endfor %}
+
+<div class="flex flex-wrap items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-[28px] font-normal tracking-tight text-ink">Schema diff</h1>
+    <p class="mt-2 text-sm text-body">
+      So sánh <span class="mono text-ink">information_schema</span> · {{ job.schema_tables|length }} bảng ·
+      A = {{ job.label_a }}, B = {{ job.label_b }}
+    </p>
+  </div>
+  <a href="/jobs/{{ job.id }}/selection" class="btn btn-primary btn-sm">
+    Proceed to Data Compare
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </a>
+</div>
+
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <div class="flex flex-wrap gap-2" id="filter-tabs">
+    <button class="chip is-active" data-filter="all">All <span class="opacity-60">{{ job.schema_tables|length }}</span></button>
+    <button class="chip" data-filter="changed">Changed <span class="opacity-60">{{ counts.changed }}</span></button>
+    <button class="chip" data-filter="new">New <span class="opacity-60">{{ counts.new }}</span></button>
+    <button class="chip" data-filter="dropped">Dropped <span class="opacity-60">{{ counts.dropped }}</span></button>
+    <button class="chip" data-filter="identical">Identical <span class="opacity-60">{{ counts.identical }}</span></button>
+  </div>
+  <div class="relative">
+    <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="table-search" type="search" placeholder="Tìm theo tên bảng…" autocomplete="off"
+           class="input mono" style="height:38px; width:260px; padding-left:34px;" />
+    <span id="search-count" class="ml-2 text-xs text-muted"></span>
+  </div>
+</div>
+
+<div class="card overflow-hidden">
+  <div class="table-scroll">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr><th class="th">Table</th><th class="th">Type</th><th class="th">Status</th><th class="th w-1/2">Thay đổi cột</th></tr>
+      </thead>
+      <tbody id="schema-rows">
+        {% for t in job.schema_tables.values() %}
+        <tr class="rowx" data-status="{{ t.status }}" data-name="{{ t.name|lower }}">
+          <td class="td mono font-medium text-ink">{{ t.name }}</td>
+          <td class="td">
+            {% if t.is_custom %}<span class="tag tag-ink">custom</span>
+            {% else %}<span class="tag tag-muted">base</span>{% endif %}
+          </td>
+          <td class="td">
+            {% if t.status == 'changed' %}<span class="tag tag-warn">changed</span>
+            {% elif t.status == 'new' %}<span class="tag tag-info">new</span>
+            {% elif t.status == 'dropped' %}<span class="tag tag-err">dropped</span>
+            {% else %}<span class="tag tag-ok">identical</span>{% endif %}
+          </td>
+          <td class="td">
+            <div class="flex flex-wrap items-center gap-1.5">
+              {% if t.added %}<span class="tag tag-ok">+{{ t.added|length }} added</span>{% endif %}
+              {% if t.dropped %}<span class="tag tag-err">−{{ t.dropped|length }} dropped</span>{% endif %}
+              {% if t.type_changed %}<span class="tag tag-warn">{{ t.type_changed|length }} type</span>{% endif %}
+              {% if t.nullable_changed %}<span class="tag tag-info">{{ t.nullable_changed|length }} nullable</span>{% endif %}
+              {% if t.status == 'identical' %}<span class="text-borderStrong">—</span>{% endif %}
+              {% if t.status == 'changed' %}
+              <details class="ml-1">
+                <summary class="cursor-pointer text-[13px] text-link hover:text-link/80">chi tiết</summary>
+              </details>
+              {% endif %}
+            </div>
+            {% if t.status == 'changed' %}
+            <div class="mono mt-2 hidden space-y-0.5 text-[11px] detail-box">
+              {% for c in t.columns %}
+              <div>
+                {% if c.kind == 'added' %}<span class="text-success">+ {{ c.name }} <span class="text-muted">({{ c.detail_b }})</span></span>
+                {% elif c.kind == 'dropped' %}<span class="text-coral">− {{ c.name }} <span class="text-muted">({{ c.detail_a }})</span></span>
+                {% elif c.kind == 'type_changed' %}<span class="text-[#8a5a00]">~ {{ c.name }}: {{ c.detail_a }} → {{ c.detail_b }}</span>
+                {% elif c.kind == 'nullable_changed' %}<span class="text-info">~ {{ c.name }} nullable: {{ c.detail_a }} → {{ c.detail_b }}</span>
+                {% else %}<span class="text-muted">~ {{ c.name }} default: {{ c.detail_a }} → {{ c.detail_b }}</span>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  let curFilter = 'all';
+  let curSearch = '';
+  const rows = Array.from(document.querySelectorAll('#schema-rows tr'));
+  const searchCount = document.getElementById('search-count');
+
+  function applyFilters() {
+    let shown = 0;
+    rows.forEach(tr => {
+      const okStatus = (curFilter === 'all' || tr.dataset.status === curFilter);
+      const okSearch = (curSearch === '' || tr.dataset.name.includes(curSearch));
+      const visible = okStatus && okSearch;
+      tr.style.display = visible ? '' : 'none';
+      if (visible) shown++;
+    });
+    searchCount.textContent = curSearch ? shown + ' kết quả' : '';
+  }
+
+  document.getElementById('filter-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-filter]');
+    if (!btn) return;
+    document.querySelectorAll('#filter-tabs .chip').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    curFilter = btn.dataset.filter;
+    applyFilters();
+  });
+
+  document.getElementById('table-search').addEventListener('input', (e) => {
+    curSearch = e.target.value.trim().toLowerCase();
+    applyFilters();
+  });
+
+  document.querySelectorAll('#schema-rows details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      const box = d.closest('td').querySelector('.detail-box');
+      if (box) box.classList.toggle('hidden', !d.open);
+    });
+  });
+</script>
+{% endblock %}

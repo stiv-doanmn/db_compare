@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% set active_step = 5 %}
+{% block title %}Report — Odoo DB Compare{% endblock %}
+{% block subheader %}{% if not standalone %}{% include "partials/_stepper.html" %}{% endif %}{% endblock %}
+
+{% block content %}
+{% set c = job.counters() %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-[28px] font-normal tracking-tight text-ink">Báo cáo so sánh</h1>
+    <p class="mt-2 text-sm text-muted mono">{{ job.label_a }} ({{ job.version_a }}) ↔ {{ job.label_b }} ({{ job.version_b }})</p>
+  </div>
+  {% if not standalone %}
+  <div class="flex gap-2">
+    <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm" download>Download JSON</a>
+    <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm" download>Download HTML</a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+  <div class="stat-card"><div class="label-xs">Tables OK</div><div class="stat-num text-success">{{ c.done }}</div></div>
+  <div class="stat-card"><div class="label-xs">With warnings</div><div class="stat-num text-mustard">{{ c.warning }}</div></div>
+  <div class="stat-card"><div class="label-xs">Errors</div><div class="stat-num text-coral">{{ c.error }}</div></div>
+  <div class="stat-card"><div class="label-xs">Total</div><div class="stat-num text-ink">{{ c.total }}</div></div>
+</div>
+
+<div class="mb-4 relative">
+  <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+  <input id="table-search" type="search" placeholder="Tìm theo tên bảng…" autocomplete="off"
+         class="input mono" style="height:38px; width:260px; padding-left:34px;" />
+</div>
+
+<div class="space-y-2.5" id="report-list">
+  {% for p in job.progress.values() %}
+  {% set sd = job.schema_tables.get(p.name) %}
+  <details class="card overflow-hidden" data-name="{{ p.name|lower }}" {{ 'open' if p.status in ('warning','error') else '' }}>
+    <summary class="flex cursor-pointer items-center gap-3 px-5 py-4 hover:bg-surface-soft">
+      <span class="mono font-medium text-ink">{{ p.name }}</span>
+      <span class="tag tag-muted">{{ p.mode }}</span>
+      {% if p.status == 'done' %}<span class="tag tag-ok">done</span>
+      {% elif p.status == 'warning' %}<span class="tag tag-warn">warning</span>
+      {% elif p.status == 'error' %}<span class="tag tag-err">error</span>
+      {% else %}<span class="tag tag-muted">{{ p.status }}</span>{% endif %}
+      <span class="ml-auto text-xs mono text-muted">{{ "%.1f"|format(p.elapsed) }}s</span>
+    </summary>
+
+    <div class="border-t border-hairline px-5 py-5 text-sm">
+      {% if p.error %}<div class="mb-4 rounded-sm bg-[#f7e6df] px-3 py-2 text-xs text-coral mono">{{ p.error }}</div>{% endif %}
+      {% if p.note %}<p class="mb-4 text-xs text-[#8a5a00]">⚠ {{ p.note }}</p>{% endif %}
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <div>
+          <div class="label-xs mb-2">Row count</div>
+          <div class="space-y-1.5">
+            <div class="flex justify-between border-b border-hairline pb-1.5"><span class="text-body">{{ job.label_a }}</span><span class="mono tabular-nums text-ink">{{ "{:,}".format(p.count_a) }}</span></div>
+            <div class="flex justify-between border-b border-hairline pb-1.5"><span class="text-body">{{ job.label_b }}</span><span class="mono tabular-nums text-ink">{{ "{:,}".format(p.count_b) }}</span></div>
+            <div class="flex justify-between pt-0.5 {{ 'font-medium text-coral' if p.count_delta != 0 else 'text-muted' }}"><span>Δ</span><span class="mono tabular-nums">{{ '+' if p.count_delta > 0 else '' }}{{ "{:,}".format(p.count_delta) }}</span></div>
+          </div>
+        </div>
+        <div>
+          <div class="label-xs mb-2">Data diff</div>
+          {% if p.mode == 'count-only' %}
+            <p class="text-xs text-muted">count-only — không scan giá trị từng dòng.</p>
+          {% else %}
+          <div class="space-y-1.5">
+            <div class="flex justify-between border-b border-hairline pb-1.5"><span class="text-body">Chỉ có ở {{ job.label_a }}</span><span class="mono tabular-nums text-ink">{{ p.only_in_a }}</span></div>
+            <div class="flex justify-between border-b border-hairline pb-1.5"><span class="text-body">Chỉ có ở {{ job.label_b }}</span><span class="mono tabular-nums text-ink">{{ p.only_in_b }}</span></div>
+            <div class="flex justify-between pt-0.5"><span class="text-body">Giá trị khác</span><span class="mono tabular-nums text-ink">{{ p.value_mismatch }}</span></div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if p.mode != 'count-only' and (p.sample_only_a or p.sample_only_b or p.sample_mismatch) %}
+      <div class="mt-5 space-y-1.5 text-xs mono">
+        {% if p.sample_only_a %}<div><span class="text-coral">only {{ job.label_a }} ids:</span> <span class="text-body">{{ p.sample_only_a|join(', ') }}{% if p.only_in_a > p.sample_only_a|length %} …{% endif %}</span></div>{% endif %}
+        {% if p.sample_only_b %}<div><span class="text-info">only {{ job.label_b }} ids:</span> <span class="text-body">{{ p.sample_only_b|join(', ') }}{% if p.only_in_b > p.sample_only_b|length %} …{% endif %}</span></div>{% endif %}
+        {% if p.sample_mismatch %}<div><span class="text-[#8a5a00]">mismatch ids:</span> <span class="text-body">{{ p.sample_mismatch|join(', ') }}{% if p.value_mismatch > p.sample_mismatch|length %} …{% endif %}</span></div>{% endif %}
+        {% if p.column_scope %}<div class="text-muted">scope: {{ p.column_scope|length }} cột hash</div>{% endif %}
+      </div>
+      {% endif %}
+
+      {% if p.mismatch_details %}
+      <div class="mt-5">
+        <div class="label-xs mb-2">Bản ghi cùng id, khác giá trị <span class="text-muted normal-case">(mẫu {{ p.mismatch_details|length }}{% if p.value_mismatch > p.mismatch_details|length %}/{{ p.value_mismatch }}{% endif %} bản ghi)</span></div>
+        <div class="overflow-x-auto rounded-md border border-hairline">
+          <table class="w-full border-collapse">
+            <thead>
+              <tr>
+                <th class="th">id</th><th class="th">Cột</th>
+                <th class="th">{{ job.label_a }}</th><th class="th">{{ job.label_b }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rec in p.mismatch_details %}
+              {% for d in rec.diffs %}
+              <tr class="rowx">
+                {% if loop.first %}<td class="td mono font-medium text-ink" rowspan="{{ rec.diffs|length }}">{{ rec.id }}</td>{% endif %}
+                <td class="td mono text-body">{{ d.col }}</td>
+                <td class="td mono text-coral break-all">{{ d.a }}</td>
+                <td class="td mono text-info break-all">{{ d.b }}</td>
+              </tr>
+              {% endfor %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if sd and sd.status == 'changed' %}
+      <div class="mt-5">
+        <div class="label-xs mb-2">Schema recap</div>
+        <div class="flex flex-wrap gap-1.5">
+          {% if sd.added %}<span class="tag tag-ok">+{{ sd.added|length }} cols</span>{% endif %}
+          {% if sd.dropped %}<span class="tag tag-err">−{{ sd.dropped|length }} cols</span>{% endif %}
+          {% if sd.type_changed %}<span class="tag tag-warn">{{ sd.type_changed|length }} type</span>{% endif %}
+          {% if sd.nullable_changed %}<span class="tag tag-info">{{ sd.nullable_changed|length }} nullable</span>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+
+<script>
+  (function () {
+    const inp = document.getElementById('table-search');
+    if (!inp) return;
+    inp.addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      document.querySelectorAll('#report-list > details').forEach(d => {
+        d.style.display = (q === '' || (d.dataset.name || '').includes(q)) ? '' : 'none';
+      });
+    });
+  })();
+</script>
+{% endblock %}

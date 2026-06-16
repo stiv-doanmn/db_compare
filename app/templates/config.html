@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% set active_step = 1 %}
+{% block title %}Config — Odoo DB Compare{% endblock %}
+{% block subheader %}{% include "partials/_stepper.html" %}{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+  <h1 class="text-[28px] font-normal tracking-tight text-ink">Kết nối database</h1>
+  <p class="mt-2 text-sm text-body">Nhập DSN của 2 database Odoo. Khuyến nghị dùng user <span class="mono text-ink">read-only</span>.</p>
+</div>
+
+<form hx-post="/jobs/{{ job.id }}/connect"
+      hx-target="#connection-status"
+      hx-swap="innerHTML"
+      hx-indicator="#connect-spin">
+
+  <div class="grid md:grid-cols-2 gap-5">
+    {% set sides = [
+        ('a', job.label_a, job.dsn_a, 'odoo17', 'bg-ink'),
+        ('b', job.label_b, job.dsn_b, 'odoo19', 'bg-coral')] %}
+    {% for side, label, dsn, defdb, accent in sides %}
+    <div class="card overflow-hidden">
+      <div class="h-1.5 {{ accent }}"></div>
+      <div class="p-6">
+        <div class="mb-5 flex items-center gap-2.5">
+          <span class="flex h-7 w-7 items-center justify-center rounded-md {{ accent }} text-xs font-semibold text-white">{{ side|upper }}</span>
+          <input name="label_{{ side }}" value="{{ label }}"
+                 class="w-full rounded-sm border border-transparent bg-transparent px-2 py-1 text-base font-medium text-ink transition hover:bg-surface-soft focus:border-hairline focus:bg-canvas focus:outline-none focus:ring-2 focus:ring-info-border/25" />
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="label-xs block">Host</label>
+            <input name="{{ side }}_host" value="{{ dsn.host if dsn else 'localhost' }}"
+                   placeholder="localhost / host.docker.internal" class="input mono mt-1.5" required />
+          </div>
+          <div>
+            <label class="label-xs block">Port</label>
+            <input name="{{ side }}_port" type="number" value="{{ dsn.port if dsn else 5432 }}" class="input mono mt-1.5" required />
+          </div>
+          <div>
+            <label class="label-xs block">Database</label>
+            <input name="{{ side }}_dbname" value="{{ dsn.dbname if dsn else defdb }}" class="input mono mt-1.5" required />
+          </div>
+          <div>
+            <label class="label-xs block">User</label>
+            <input name="{{ side }}_user" value="{{ dsn.user if dsn else 'odoo' }}" class="input mono mt-1.5" required />
+          </div>
+          <div>
+            <label class="label-xs block">Password</label>
+            <input name="{{ side }}_password" type="password" value="{{ dsn.password if dsn else '' }}" placeholder="••••••" class="input mono mt-1.5" />
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card mt-5 p-6">
+    <label class="label-xs">Custom prefix</label>
+    <p class="mb-3 mt-1 text-xs text-body">Bảng bắt đầu bằng các prefix này được xếp loại <span class="tag tag-ink">custom</span>. Phân tách bằng dấu phẩy.</p>
+    <input name="prefixes" value="{{ job.prefixes | join(', ') }}" class="input mono" placeholder="nev_, astra_, sh_, helpdesk_, audit />
+  </div>
+
+  <div class="mt-6">
+    <button type="submit" class="btn btn-primary btn-sm">
+      <span id="connect-spin" class="spinner htmx-indicator"></span>
+      Test connection
+    </button>
+  </div>
+</form>
+
+<div id="connection-status" class="mt-6">
+  {% include "partials/connection_status.html" %}
+</div>
+{% endblock %}

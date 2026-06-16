@@ -1,0 +1,37 @@
+{% if job.dsn_a %}
+<div class="grid md:grid-cols-2 gap-4">
+  {% for connected, version, error, label, dsn in [
+      (job.connected_a, job.version_a, job.error_a, job.label_a, job.dsn_a),
+      (job.connected_b, job.version_b, job.error_b, job.label_b, job.dsn_b)] %}
+  <div class="card flex items-start gap-3 p-4">
+    <span class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md {{ 'bg-[#e7f0e7] text-success' if connected else 'bg-[#f7e6df] text-coral' }}">
+      {% if connected %}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      {% else %}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      {% endif %}
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2">
+        <span class="font-medium text-ink">{{ label }}</span>
+        {% if connected %}<span class="tag tag-ok">OK</span>{% else %}<span class="tag tag-err">FAIL</span>{% endif %}
+      </div>
+      <p class="mt-1 truncate text-xs text-muted mono">
+        {% if connected %}{{ version }} · {{ dsn.host }}:{{ dsn.port }}/{{ dsn.dbname }}
+        {% else %}{{ error }}{% endif %}
+      </p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<form method="post" action="/jobs/{{ job.id }}/schema-diff" class="mt-6 flex items-center gap-3">
+  <button type="submit" class="btn btn-primary btn-sm" {{ '' if job.both_connected else 'disabled' }}>
+    Run Schema Diff
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </button>
+  {% if not job.both_connected %}
+  <span class="text-xs text-muted">Cả 2 DB phải connect OK mới chạy được.</span>
+  {% endif %}
+</form>
+{% endif %}

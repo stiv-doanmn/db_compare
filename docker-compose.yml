@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MAX_WORKERS: "4"
+      BATCH_SIZE: "1000"
+      DEFAULT_PREFIXES: "nev_,astra_"
+    # Cho phép container kết nối tới Postgres chạy trên host (Windows/Mac):
+    # dùng host "host.docker.internal" trong form DSN.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

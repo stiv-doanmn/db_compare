@@ -1,0 +1,35 @@
+{% set steps = [
+    (1, 'Config',       '/jobs/' ~ job.id,                   True),
+    (2, 'Schema diff',  '/jobs/' ~ job.id ~ '/schema-diff',  job.schema_tables|length > 0),
+    (3, 'Chọn bảng',    '/jobs/' ~ job.id ~ '/selection',    job.estimates|length > 0),
+    (4, 'Compare',      '/jobs/' ~ job.id ~ '/progress',     job.progress|length > 0),
+    (5, 'Report',       '/jobs/' ~ job.id ~ '/report',       job.progress|length > 0),
+] %}
+<div class="border-t border-hairline bg-canvas">
+  <div class="max-w-6xl mx-auto px-6">
+    <ol class="flex items-center py-3.5 overflow-x-auto">
+      {% for n, label, href, available in steps %}
+      {% set done = n < active_step %}
+      {% set cur = n == active_step %}
+      {% set clickable = available and not cur %}
+      <li class="flex items-center gap-2.5 shrink-0">
+        <{{ 'a href="' ~ href ~ '"' if clickable else 'span' }} class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            {% if done %}bg-ink text-white {{ 'group-hover:bg-inkActive' if clickable else '' }}
+            {% elif cur %}bg-ink text-white ring-4 ring-ink/10
+            {% else %}bg-surface-strong text-muted{% endif %}">
+            {% if done %}&checkmark;{% else %}{{ n }}{% endif %}
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            {% if cur %}font-medium text-ink
+            {% elif available %}text-body {{ 'group-hover:text-ink' if clickable else '' }}
+            {% else %}text-borderStrong{% endif %}">{{ label }}</span>
+        </{{ 'a' if clickable else 'span' }}>
+      </li>
+      {% if not loop.last %}
+      <li class="mx-3 md:mx-4 h-px w-5 md:w-10 shrink-0 {{ 'bg-ink/40' if n < active_step else 'bg-hairline' }}"></li>
+      {% endif %}
+      {% endfor %}
+    </ol>
+  </div>
+</div>

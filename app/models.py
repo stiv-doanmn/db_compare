@@ -1,0 +1,184 @@
+"""Data model in-memory cho job state."""
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+@dataclass
+class DSNConfig:
+    host: str
+    port: int
+    dbname: str
+    user: str
+    password: str
+
+    def dsn(self) -> str:
+        return (
+            f"postgresql://{self.user}:{self.password}"
+            f"@{self.host}:{self.port}/{self.dbname}"
+        )
+
+    def safe(self) -> dict[str, Any]:
+        """Dạng hiển thị/log — không lộ password."""
+        return {
+            "host": self.host,
+            "port": self.port,
+            "dbname": self.dbname,
+            "user": self.user,
+        }
+
+
+@dataclass
+class ColumnDiff:
+    name: str
+    kind: str  # added | dropped | type_changed | nullable_changed | default_changed
+    detail_a: Optional[str] = None
+    detail_b: Optional[str] = None
+
+
+@dataclass
+class TableSchemaDiff:
+    name: str
+    status: str  # identical | changed | new | dropped
+    is_custom: bool
+    columns: list[ColumnDiff] = field(default_factory=list)
+
+    @property
+    def added(self) -> list[ColumnDiff]:
+        return [c for c in self.columns if c.kind == "added"]
+
+    @property
+    def dropped(self) -> list[ColumnDiff]:
+        return [c for c in self.columns if c.kind == "dropped"]
+
+    @property
+    def type_changed(self) -> list[ColumnDiff]:
+        return [c for c in self.columns if c.kind == "type_changed"]
+
+    @property
+    def nullable_changed(self) -> list[ColumnDiff]:
+        return [c for c in self.columns if c.kind == "nullable_changed"]
+
+
+@dataclass
+class TableEstimate:
+    name: str
+    rows_a: int = 0
+    rows_b: int = 0
+    has_id: bool = False
+    suggested_mode: str = "count-only"
+
+
+@dataclass
+class TableProgress:
+    name: str
+    mode: str
+    status: str = "queued"  # queued | running | done | warning | error
+    scanned: int = 0
+    total: int = 0
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    # Kết quả compare
+    count_a: int = 0
+    count_b: int = 0
+    only_in_a: int = 0
+    only_in_b: int = 0
+    value_mismatch: int = 0
+    sample_only_a: list[Any] = field(default_factory=list)
+    sample_only_b: list[Any] = field(default_factory=list)
+    sample_mismatch: list[Any] = field(default_factory=list)
+    # Chi tiết bản ghi cùng id nhưng khác giá trị:
+    # [{"id": x, "diffs": [{"col": c, "a": "...", "b": "..."}]}]
+    mismatch_details: list[dict] = field(default_factory=list)
+    column_scope: list[str] = field(default_factory=list)
+    note: str = ""
+    error: str = ""
+
+    @property
+    def elapsed(self) -> float:
+        if self.started_at is None:
+            return 0.0
+        end = self.finished_at or time.time()
+        return end - self.started_at
+
+    @property
+    def count_delta(self) -> int:
+        return self.count_b - self.count_a
+
+    @property
+    def percent(self) -> int:
+        if self.total <= 0:
+            return 100 if self.status in ("done", "warning") else 0
+        return min(100, int(self.scanned * 100 / self.total))
+
+    @property
+    def sort_rank(self) -> int:
+        """Chưa xong (running/queued) lên trên, đã xong xuống dưới."""
+        return {"running": 0, "queued": 1}.get(self.status, 2)
+
+
+@dataclass
+class JobState:
+    id: str
+    created_at: float = field(default_factory=time.time)
+    status: str = "config"  # config | schema | selection | running | done
+
+    label_a: str = "Odoo 17"
+    label_b: str = "Odoo 19"
+    dsn_a: Optional[DSNConfig] = None
+    dsn_b: Optional[DSNConfig] = None
+    pool_a: Any = None  # asyncpg.Pool
+    pool_b: Any = None
+    connected_a: bool = False
+    connected_b: bool = False
+    version_a: str = ""
+    version_b: str = ""
+    error_a: str = ""
+    error_b: str = ""
+
+    prefixes: list[str] = field(default_factory=list)
+
+    # Phase 1
+    schema_tables: dict[str, TableSchemaDiff] = field(default_factory=dict)
+    # Phase 2
+    estimates: dict[str, TableEstimate] = field(default_factory=dict)
+    selection: dict[str, str] = field(default_factory=dict)  # table -> mode
+    # Phase 3
+    progress: dict[str, TableProgress] = field(default_factory=dict)
+    queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    compare_task: Any = None
+    compare_started_at: Optional[float] = None
+    compare_finished_at: Optional[float] = None
+
+    @property
+    def both_connected(self) -> bool:
+        return self.connected_a and self.connected_b
+
+    def is_custom(self, table: str) -> bool:
+        return any(table.startswith(p) for p in self.prefixes)
+
+    # --- counters cho màn progress / report ---
+    def counters(self) -> dict[str, int]:
+        done = warning = error = queued = running = 0
+        for p in self.progress.values():
+            if p.status == "done":
+                done += 1
+            elif p.status == "warning":
+                warning += 1
+            elif p.status == "error":
+                error += 1
+            elif p.status == "running":
+                running += 1
+            else:
+                queued += 1
+        return {
+            "done": done,
+            "warning": warning,
+            "error": error,
+            "queued": queued,
+            "running": running,
+            "total": len(self.progress),
+        }

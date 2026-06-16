@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="vi" class="h-full" style="color-scheme: light;">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Chọn bảng — Odoo DB Compare</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            ink: '#181d26',
+            inkActive: '#0d1218',
+            body: '#333840',
+            muted: '#41454d',
+            hairline: '#dddddd',
+            borderStrong: '#9297a0',
+            canvas: '#ffffff',
+            'surface-soft': '#f8fafc',
+            'surface-strong': '#e0e2e6',
+            'surface-dark': '#181d26',
+            coral: '#aa2d00',
+            forest: '#0a2e0e',
+            cream: '#f5e9d4',
+            peach: '#fcab79',
+            mint: '#a8d8c4',
+            yellow: '#f4d35e',
+            mustard: '#d9a441',
+            link: '#1b61c9',
+            info: '#254fad',
+            'info-border': '#458fff',
+            success: '#006400',
+            'success-border': '#39bf45',
+          },
+          borderRadius: { xs: '2px', sm: '6px', md: '10px', lg: '12px' },
+        },
+      },
+    };
+  </script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+
+  <style>
+    /* ===== Design system Airtable — CSS thuần (không phụ thuộc @apply) ===== */
+    html, body { background-color: #f8fafc; color: #333840; }
+
+    .card { border: 1px solid #dddddd; border-radius: 10px; background: #ffffff; }
+
+    .label-xs { display: block; font-size: 11px; font-weight: 500; text-transform: uppercase;
+                letter-spacing: .05em; color: #41454d; }
+
+    .input, .select {
+      box-sizing: border-box; height: 44px; width: 100%; border-radius: 6px;
+      border: 1px solid #dddddd; background: #ffffff; padding: 0 16px;
+      font-size: 14px; color: #181d26; transition: border-color .15s, box-shadow .15s;
+    }
+    .select { padding-right: 36px; appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2341454d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; }
+    .input::placeholder { color: rgba(65,69,77,.5); }
+    .input:focus, .select:focus { outline: none; border-color: #458fff; box-shadow: 0 0 0 2px rgba(69,143,255,.25); }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      border: 1px solid transparent; border-radius: 12px; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background .15s, border-color .15s, color .15s; text-decoration: none; }
+    .btn-primary { background: #181d26; color: #ffffff; padding: 10px 20px; }
+    .btn-primary:hover { background: #0d1218; }
+    .btn-secondary { background: #ffffff; color: #181d26; border-color: #dddddd; padding: 10px 20px; }
+    .btn-secondary:hover { background: #f8fafc; }
+    .btn-ghost { color: #333840; padding: 8px 12px; }
+    .btn-ghost:hover { background: #f8fafc; }
+    .btn-sm { padding: 8px 14px; font-size: 13px; }
+    .btn:disabled, .btn[disabled] { cursor: not-allowed; background: #e0e2e6; color: #9297a0; border-color: #dddddd; }
+
+    .chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+      border: 1px solid #dddddd; border-radius: 6px; background: #ffffff; padding: 6px 12px;
+      font-size: 13px; font-weight: 500; color: #333840; transition: background .15s, border-color .15s, color .15s; }
+    .chip:hover { background: #f8fafc; }
+    .chip.is-active { border-color: #181d26; background: #181d26; color: #ffffff; }
+
+    .tag { display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; padding: 2px 8px;
+      font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+    .tag-ok    { background: #e7f0e7; color: #006400; }
+    .tag-warn  { background: #f7ecd2; color: #8a5a00; }
+    .tag-err   { background: #f7e6df; color: #aa2d00; }
+    .tag-info  { background: #e7eefb; color: #254fad; }
+    .tag-ink   { background: #181d26; color: #ffffff; }
+    .tag-muted { background: #e0e2e6; color: #41454d; }
+
+    .th { padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .05em; color: #41454d; border-bottom: 1px solid #dddddd; white-space: nowrap; }
+    .td { padding: 12px 16px; font-size: 14px; border-bottom: 1px solid #dddddd; vertical-align: middle; }
+    .th.text-right, .td.text-right { text-align: right; }
+    tbody tr:last-child .td { border-bottom: none; }
+
+    .stat-card { border: 1px solid #dddddd; border-radius: 10px; background: #ffffff; padding: 16px 20px; }
+    .stat-num { margin-top: 4px; font-size: 32px; font-weight: 400; line-height: 1;
+      font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    tbody tr.rowx:hover { background: #f8fafc; }
+    ::-webkit-scrollbar { height: 10px; width: 10px; }
+    ::-webkit-scrollbar-thumb { background: #cbd0d8; border-radius: 9999px; border: 2px solid #f8fafc; }
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+
+    /* CSS spinner thay cho DaisyUI loading */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+      border-radius: 9999px; animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline-block; }
+  </style>
+</head>
+<body class="min-h-full font-sans text-body antialiased">
+  <header class="sticky top-0 z-30 border-b border-hairline bg-canvas">
+    <div class="max-w-6xl mx-auto flex items-center gap-3 px-6 h-16">
+      <a href="/" class="flex items-center gap-2.5">
+        <span class="flex h-8 w-8 items-center justify-center rounded-md bg-ink text-white">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        </span>
+        <span class="text-[15px] font-medium tracking-tight text-ink">Odoo DB Compare</span>
+      </a>
+      <div class="ml-auto"></div>
+    </div>
+    
+<div class="border-t border-hairline bg-canvas">
+  <div class="max-w-6xl mx-auto px-6">
+    <ol class="flex items-center py-3.5 overflow-x-auto">
+      
+      
+      
+      
+      <li class="flex items-center gap-2.5 shrink-0">
+        <a href=&#34;/jobs/713afb075f1a4b759cc0f57dbdc8c2c3&#34; class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            bg-ink text-white group-hover:bg-inkActive
+            ">
+            &checkmark;
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            text-body group-hover:text-ink
+            ">Config</span>
+        </a>
+      </li>
+      
+      <li class="mx-3 md:mx-4 h-px w-5 md:w-10 shrink-0 bg-ink/40"></li>
+      
+      
+      
+      
+      
+      <li class="flex items-center gap-2.5 shrink-0">
+        <a href=&#34;/jobs/713afb075f1a4b759cc0f57dbdc8c2c3/schema-diff&#34; class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            bg-ink text-white group-hover:bg-inkActive
+            ">
+            &checkmark;
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            text-body group-hover:text-ink
+            ">Schema diff</span>
+        </a>
+      </li>
+      
+      <li class="mx-3 md:mx-4 h-px w-5 md:w-10 shrink-0 bg-ink/40"></li>
+      
+      
+      
+      
+      
+      <li class="flex items-center gap-2.5 shrink-0">
+        <span class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            bg-ink text-white ring-4 ring-ink/10
+            ">
+            3
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            font-medium text-ink
+            ">Chọn bảng</span>
+        </span>
+      </li>
+      
+      <li class="mx-3 md:mx-4 h-px w-5 md:w-10 shrink-0 bg-hairline"></li>
+      
+      
+      
+      
+      
+      <li class="flex items-center gap-2.5 shrink-0">
+        <a href=&#34;/jobs/713afb075f1a4b759cc0f57dbdc8c2c3/progress&#34; class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            bg-surface-strong text-muted">
+            4
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            text-body group-hover:text-ink
+            ">Compare</span>
+        </a>
+      </li>
+      
+      <li class="mx-3 md:mx-4 h-px w-5 md:w-10 shrink-0 bg-hairline"></li>
+      
+      
+      
+      
+      
+      <li class="flex items-center gap-2.5 shrink-0">
+        <a href=&#34;/jobs/713afb075f1a4b759cc0f57dbdc8c2c3/report&#34; class="group flex items-center gap-2.5">
+          <span class="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium transition
+            bg-surface-strong text-muted">
+            5
+          </span>
+          <span class="text-[13px] whitespace-nowrap transition
+            text-body group-hover:text-ink
+            ">Report</span>
+        </a>
+      </li>
+      
+      
+    </ol>
+  </div>
+</div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    
+<div class="mb-6">
+  <h1 class="text-[28px] font-normal tracking-tight text-ink">Chọn bảng để compare</h1>
+  <p class="mt-2 text-sm text-body">4 bảng có ở cả 2 DB · row estimate từ <span class="mono text-ink">pg_class.reltuples</span> · mode auto-suggest, có thể override.</p>
+</div>
+
+<form method="post" action="/jobs/713afb075f1a4b759cc0f57dbdc8c2c3/compare">
+  <div class="mb-5 flex flex-wrap gap-2">
+    <button type="button" class="chip" data-act="all">Select All</button>
+    <button type="button" class="chip" data-act="custom">Custom Only</button>
+    <button type="button" class="chip" data-act="base">Base Only</button>
+    <button type="button" class="chip" data-act="clear">Clear</button>
+  </div>
+
+  <div class="card overflow-hidden mb-28">
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse">
+        <thead>
+          <tr>
+            <th class="th w-10"><input type="checkbox" id="check-all" class="h-4 w-4 rounded-sm border-hairline accent-ink" checked></th>
+            <th class="th">Table</th>
+            <th class="th text-right">Odoo 17</th>
+            <th class="th text-right">Odoo 19</th>
+            <th class="th text-right">Δ rows</th>
+            <th class="th">Schema</th>
+            <th class="th">Mode</th>
+            <th class="th text-right">Est. time</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+          
+          
+          
+          <tr class="rowx" data-custom="1">
+            <td class="td"><input type="checkbox" name="select" value="astra_subscription" class="row-select h-4 w-4 rounded-sm border-hairline accent-ink" checked></td>
+            <td class="td">
+              <span class="mono font-medium text-ink">astra_subscription</span>
+              <span class="tag tag-ink ml-1.5">custom</span>
+            </td>
+            <td class="td text-right mono tabular-nums text-body">1,240</td>
+            <td class="td text-right mono tabular-nums text-body">1,255</td>
+            <td class="td text-right mono tabular-nums font-medium text-coral">
+              +15
+            </td>
+            <td class="td">
+              <span class="tag tag-warn">changed</span>
+              
+            </td>
+            <td class="td">
+              
+              <select name="mode_astra_subscription" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="1255">
+                
+                <option value="full" selected>full</option>
+                
+                <option value="intersection" >intersection</option>
+                
+                <option value="count-only" >count-only</option>
+                
+              </select>
+              
+            </td>
+            <td class="td text-right mono text-xs text-muted est-cell">—</td>
+          </tr>
+          
+          
+          
+          
+          <tr class="rowx" data-custom="1">
+            <td class="td"><input type="checkbox" name="select" value="nev_invoice_line" class="row-select h-4 w-4 rounded-sm border-hairline accent-ink" checked></td>
+            <td class="td">
+              <span class="mono font-medium text-ink">nev_invoice_line</span>
+              <span class="tag tag-ink ml-1.5">custom</span>
+            </td>
+            <td class="td text-right mono tabular-nums text-body">98,000</td>
+            <td class="td text-right mono tabular-nums text-body">98,000</td>
+            <td class="td text-right mono tabular-nums text-borderStrong">
+              0
+            </td>
+            <td class="td">
+              <span class="tag tag-warn">changed</span>
+              
+            </td>
+            <td class="td">
+              
+              <select name="mode_nev_invoice_line" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="98000">
+                
+                <option value="full" selected>full</option>
+                
+                <option value="intersection" >intersection</option>
+                
+                <option value="count-only" >count-only</option>
+                
+              </select>
+              
+            </td>
+            <td class="td text-right mono text-xs text-muted est-cell">—</td>
+          </tr>
+          
+          
+          
+          
+          <tr class="rowx" data-custom="0">
+            <td class="td"><input type="checkbox" name="select" value="res_partner" class="row-select h-4 w-4 rounded-sm border-hairline accent-ink" checked></td>
+            <td class="td">
+              <span class="mono font-medium text-ink">res_partner</span>
+              
+            </td>
+            <td class="td text-right mono tabular-nums text-body">54,000</td>
+            <td class="td text-right mono tabular-nums text-body">54,010</td>
+            <td class="td text-right mono tabular-nums font-medium text-coral">
+              +10
+            </td>
+            <td class="td">
+              <span class="tag tag-ok">identical</span>
+            </td>
+            <td class="td">
+              
+              <select name="mode_res_partner" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="54010">
+                
+                <option value="full" >full</option>
+                
+                <option value="intersection" selected>intersection</option>
+                
+                <option value="count-only" >count-only</option>
+                
+              </select>
+              
+            </td>
+            <td class="td text-right mono text-xs text-muted est-cell">—</td>
+          </tr>
+          
+          
+          
+          
+          <tr class="rowx" data-custom="0">
+            <td class="td"><input type="checkbox" name="select" value="sale_order" class="row-select h-4 w-4 rounded-sm border-hairline accent-ink" checked></td>
+            <td class="td">
+              <span class="mono font-medium text-ink">sale_order</span>
+              
+            </td>
+            <td class="td text-right mono tabular-nums text-body">2,100,000</td>
+            <td class="td text-right mono tabular-nums text-body">2,100,000</td>
+            <td class="td text-right mono tabular-nums text-borderStrong">
+              0
+            </td>
+            <td class="td">
+              <span class="tag tag-ok">identical</span>
+            </td>
+            <td class="td">
+              
+              <select name="mode_sale_order" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="2100000">
+                
+                <option value="full" >full</option>
+                
+                <option value="intersection" >intersection</option>
+                
+                <option value="count-only" selected>count-only</option>
+                
+              </select>
+              
+            </td>
+            <td class="td text-right mono text-xs text-muted est-cell">—</td>
+          </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-canvas">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-4 px-6 py-3.5">
+      <div class="text-sm text-body">
+        <span class="font-medium text-ink" id="sel-count">0</span> bảng đã chọn ·
+        tổng est. ≈ <span class="font-medium text-ink mono" id="sel-time">0s</span>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">
+        Run Compare
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</form>
+
+<script>
+  function estOne(mode, rows) { return mode === 'count-only' ? 0.5 : 1.0 + rows / 80000; }
+  function fmtTime(s) {
+    if (s < 60) return Math.round(s) + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+    return Math.floor(s / 3600) + 'h ' + Math.round((s % 3600) / 60) + 'm';
+  }
+  function recompute() {
+    let count = 0, total = 0;
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.row-select');
+      const sel = tr.querySelector('.mode-select');
+      const cell = tr.querySelector('.est-cell');
+      const rows = sel ? parseInt(sel.dataset.rows || '0', 10) : 0;
+      const mode = sel ? sel.value : 'count-only';
+      const t = estOne(mode, rows);
+      const warn = (rows > 1000000) ? '⚠ ' : '';
+      cell.innerHTML = cb.checked ? warn + fmtTime(t) : '<span class="text-borderStrong">skip</span>';
+      if (cb.checked) { count++; total += t; }
+    });
+    document.getElementById('sel-count').textContent = count;
+    document.getElementById('sel-time').textContent = fmtTime(total);
+  }
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('.row-select, .mode-select')) recompute();
+    if (e.target.id === 'check-all') {
+      document.querySelectorAll('.row-select').forEach(cb => cb.checked = e.target.checked);
+      recompute();
+    }
+  });
+  document.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    document.querySelectorAll('tbody tr').forEach(tr => {
+      const cb = tr.querySelector('.row-select');
+      const isCustom = tr.dataset.custom === '1';
+      if (act === 'all') cb.checked = true;
+      else if (act === 'clear') cb.checked = false;
+      else if (act === 'custom') cb.checked = isCustom;
+      else if (act === 'base') cb.checked = !isCustom;
+    });
+    recompute();
+  }));
+  recompute();
+</script>
+
+  </main>
+</body>
+</html>

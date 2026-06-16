@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_step = 4 %}
+{% block title %}Đang compare — Odoo DB Compare{% endblock %}
+{% block subheader %}{% include "partials/_stepper.html" %}{% endblock %}
+
+{% block content %}
+{% set running = job.compare_finished_at is none %}
+{% set elapsed = (job.compare_finished_at or now()) - (job.compare_started_at or now()) %}
+<div class="mb-6 flex items-end justify-between gap-4">
+  <div>
+    <h1 class="text-[28px] font-normal tracking-tight text-ink">Đang compare dữ liệu</h1>
+    <p class="mt-2 text-sm text-body">Chạy song song qua semaphore · cập nhật realtime qua SSE.</p>
+  </div>
+  <div class="text-right">
+    <div class="label-xs">Thời gian</div>
+    <div id="compare-timer" class="mono text-[28px] font-normal tabular-nums text-ink"
+         data-elapsed="{{ '%.0f'|format(elapsed if elapsed > 0 else 0) }}"
+         data-running="{{ '1' if running else '0' }}">00:00</div>
+  </div>
+</div>
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+  <div class="flex flex-wrap gap-2" id="status-filter">
+    <button class="chip is-active" data-status="all">All <span class="opacity-60" data-count="all">0</span></button>
+    <button class="chip" data-status="running">Running <span class="opacity-60" data-count="running">0</span></button>
+    <button class="chip" data-status="queued">Queued <span class="opacity-60" data-count="queued">0</span></button>
+    <button class="chip" data-status="done">Done <span class="opacity-60" data-count="done">0</span></button>
+    <button class="chip" data-status="warning">Warning <span class="opacity-60" data-count="warning">0</span></button>
+    <button class="chip" data-status="error">Error <span class="opacity-60" data-count="error">0</span></button>
+  </div>
+  <div class="relative">
+    <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="table-search" type="search" placeholder="Tìm theo tên bảng…" autocomplete="off"
+           class="input mono" style="height:38px; width:260px; padding-left:34px;" />
+  </div>
+</div>
+
+<div id="progress-stream" hx-ext="sse" sse-connect="/jobs/{{ job.id }}/stream">
+  <div sse-swap="progress" hx-swap="innerHTML">
+    {% include "partials/progress_body.html" %}
+  </div>
+  <div sse-swap="done" hx-swap="outerHTML" hx-target="#progress-stream"></div>
+</div>
+
+<script>
+  (function () {
+    const el = document.getElementById('compare-timer');
+    if (!el) return;
+    let e = parseInt(el.dataset.elapsed || '0', 10);
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = s => {
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+      return h > 0 ? h + ':' + pad(m) + ':' + pad(ss) : pad(m) + ':' + pad(ss);
+    };
+    el.textContent = fmt(e);
+    if (el.dataset.running === '1') {
+      const iv = setInterval(() => {
+        if (document.getElementById('compare-finished')) { clearInterval(iv); return; }
+        e += 1; el.textContent = fmt(e);
+      }, 1000);
+    }
+  })();
+
+  // Filter theo trạng thái + search theo tên — re-apply sau mỗi lần SSE swap
+  (function () {
+    let q = '';
+    let status = 'all';
+    const inp = document.getElementById('table-search');
+    const chips = document.getElementById('status-filter');
+
+    function apply() {
+      const counts = { all: 0, running: 0, queued: 0, done: 0, warning: 0, error: 0 };
+      document.querySelectorAll('#progress-stream tbody tr').forEach(tr => {
+        const st = tr.dataset.status || '';
+        counts.all++; if (counts[st] !== undefined) counts[st]++;
+        const okStatus = (status === 'all' || st === status);
+        const okSearch = (q === '' || (tr.dataset.name || '').includes(q));
+        tr.style.display = (okStatus && okSearch) ? '' : 'none';
+      });
+      chips.querySelectorAll('[data-count]').forEach(s => {
+        s.textContent = counts[s.dataset.count] ?? 0;
+      });
+    }
+
+    chips.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-status]');
+      if (!btn) return;
+      chips.querySelectorAll('.chip').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      status = btn.dataset.status;
+      apply();
+    });
+    inp.addEventListener('input', e => { q = e.target.value.trim().toLowerCase(); apply(); });
+    document.body.addEventListener('htmx:afterSettle', apply);
+    apply();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,200 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.wrap{padding:1.5rem 0;max-width:680px}
+.section-label{font-size:11px;font-weight:500;letter-spacing:.08em;color:var(--color-text-tertiary);text-transform:uppercase;margin-bottom:.75rem}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:.75rem}
+.phase-header{display:flex;align-items:center;gap:10px;margin-bottom:.75rem}
+.phase-num{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0}
+.p1{background:#E6F1FB;color:#0C447C}
+.p2{background:#E1F5EE;color:#085041}
+.p3{background:#EEEDFE;color:#3C3489}
+.p4{background:#FAEEDA;color:#633806}
+.p5{background:#EAF3DE;color:#27500A}
+.phase-title{font-size:14px;font-weight:500;color:var(--color-text-primary)}
+.phase-sub{font-size:12px;color:var(--color-text-secondary);margin-left:auto}
+.step-list{display:flex;flex-direction:column;gap:6px}
+.step{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--color-text-secondary);line-height:1.5}
+.step i{font-size:14px;margin-top:2px;flex-shrink:0}
+.step .tag{font-size:11px;font-weight:500;padding:1px 7px;border-radius:4px;flex-shrink:0;margin-top:2px}
+.tag-auto{background:#E6F1FB;color:#185FA5}
+.tag-user{background:#E1F5EE;color:#0F6E56}
+.tag-bg{background:#F1EFE8;color:#5F5E5A}
+.divider{display:flex;align-items:center;gap:8px;margin:.5rem 0;color:var(--color-text-tertiary)}
+.divider-line{flex:1;height:0.5px;background:var(--color-border-tertiary)}
+.divider i{font-size:14px}
+.stack-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.75rem}
+.stack-card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:.75rem 1rem}
+.stack-role{font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px}
+.stack-val{font-size:13px;font-weight:500;color:var(--color-text-primary)}
+.stack-note{font-size:12px;color:var(--color-text-secondary);margin-top:2px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:6px 8px;color:var(--color-text-tertiary);font-weight:500;border-bottom:0.5px solid var(--color-border-tertiary)}
+td{padding:6px 8px;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-secondary);vertical-align:top}
+td:first-child{color:var(--color-text-primary);font-weight:500;font-size:13px;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:4px}
+.badge-blue{background:#E6F1FB;color:#185FA5}
+.badge-green{background:#E1F5EE;color:#0F6E56}
+.badge-purple{background:#EEEDFE;color:#534AB7}
+.badge-amber{background:#FAEEDA;color:#854F0B}
+.badge-gray{background:#F1EFE8;color:#5F5E5A}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:.5rem}
+.flow-item{font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);border-radius:4px;padding:3px 8px}
+.flow-arrow{color:var(--color-text-tertiary);font-size:12px}
+.constraints{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.con-item{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--color-text-secondary)}
+.con-item i{font-size:13px;color:var(--color-text-tertiary);margin-top:1px}
+</style>
+<h2 class="sr-only">Odoo DB Compare Tool — Project Plan</h2>
+<div class="wrap">
+
+<p class="section-label">Stack</p>
+<div class="stack-grid">
+  <div class="stack-card">
+    <div class="stack-role">Backend</div>
+    <div class="stack-val">FastAPI + asyncpg</div>
+    <div class="stack-note">Async, SSE native, PostgreSQL parallel queries</div>
+  </div>
+  <div class="stack-card">
+    <div class="stack-role">Frontend (SSR)</div>
+    <div class="stack-val">Jinja2 + HTMX</div>
+    <div class="stack-note">Server-rendered, real-time update không cần JS framework</div>
+  </div>
+  <div class="stack-card">
+    <div class="stack-role">UI Components</div>
+    <div class="stack-val">DaisyUI + Tailwind CDN</div>
+    <div class="stack-note">Table, badge, progress, modal — không cần build step</div>
+  </div>
+  <div class="stack-card">
+    <div class="stack-role">Deploy</div>
+    <div class="stack-val">Docker Compose</div>
+    <div class="stack-note">Local hoặc server, connect DB qua host:port</div>
+  </div>
+</div>
+
+<p class="section-label">Screen flow</p>
+
+<div class="card">
+  <div class="phase-header">
+    <div class="phase-num p1">1</div>
+    <div class="phase-title">Config</div>
+    <div class="phase-sub"><span class="badge badge-blue"><i class="ti ti-user" aria-hidden="true"></i>user input</span></div>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-server" aria-hidden="true"></i><span>Nhập DSN cho Odoo 17 và Odoo 19 (host, port, dbname, user, password)</span></div>
+    <div class="step"><i class="ti ti-plug" aria-hidden="true"></i><span>Test connection — hiển thị badge OK / FAIL per DB</span></div>
+    <div class="step"><i class="ti ti-adjustments" aria-hidden="true"></i><span>Custom prefix config: <code>nev_</code>, <code>astra_</code> — editable, có thể thêm bớt</span></div>
+    <div class="step"><i class="ti ti-arrow-right" aria-hidden="true"></i><span>Sau khi cả 2 DB connect OK → unlock nút <strong>Run Schema Diff</strong></span></div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><i class="ti ti-chevron-down" aria-hidden="true"></i><div class="divider-line"></div></div>
+
+<div class="card">
+  <div class="phase-header">
+    <div class="phase-num p2">2</div>
+    <div class="phase-title">Schema diff — phase 1</div>
+    <div class="phase-sub"><span class="badge badge-green"><i class="ti ti-bolt" aria-hidden="true"></i>auto</span></div>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-database" aria-hidden="true"></i><span>Query <code>information_schema</code> cả 2 DB — so sánh columns, types, nullable, defaults</span></div>
+    <div class="step"><i class="ti ti-tag" aria-hidden="true"></i><span>Classify mỗi bảng: <span class="badge badge-purple" style="font-size:10px">custom</span> (prefix match) hoặc <span class="badge badge-gray" style="font-size:10px">base</span></span></div>
+    <div class="step"><i class="ti ti-filter" aria-hidden="true"></i><span>Filter tabs: All · Changed · New · Dropped · Identical</span></div>
+    <div class="step"><i class="ti ti-list-details" aria-hidden="true"></i><span>Per table: hiển thị added cols / dropped cols / type changed / nullable changed</span></div>
+    <div class="step"><i class="ti ti-arrow-right" aria-hidden="true"></i><span>User review xong → <strong>Proceed to Data Compare</strong></span></div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><i class="ti ti-chevron-down" aria-hidden="true"></i><div class="divider-line"></div></div>
+
+<div class="card">
+  <div class="phase-header">
+    <div class="phase-num p3">3</div>
+    <div class="phase-title">Table selection — phase 2</div>
+    <div class="phase-sub"><span class="badge badge-blue"><i class="ti ti-user" aria-hidden="true"></i>user chọn</span></div>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-table" aria-hidden="true"></i><span>Hiển thị toàn bộ bảng tồn tại ở cả 2 DB kèm thông tin:</span></div>
+  </div>
+  <div class="table-wrap" style="margin:.6rem 0 .6rem 22px">
+    <table>
+      <tr>
+        <th>Column</th><th>Nguồn dữ liệu</th><th>Ghi chú</th>
+      </tr>
+      <tr><td>v17 rows</td><td><code>pg_class.reltuples</code></td><td>Estimate, không scan toàn bảng</td></tr>
+      <tr><td>v19 rows</td><td><code>pg_class.reltuples</code></td><td>Estimate, không scan toàn bảng</td></tr>
+      <tr><td>Δ rows</td><td>Tính từ 2 cột trên</td><td>+/- highlight nếu lệch</td></tr>
+      <tr><td>Schema status</td><td>Kết quả phase 1</td><td>Changed / Identical</td></tr>
+      <tr><td>Mode</td><td>Auto-suggest, user override</td><td>Dropdown per row</td></tr>
+      <tr><td>Est. time</td><td>estimator.py</td><td>⚠ flag nếu &gt;1M rows</td></tr>
+    </table>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i><span>Mode auto-suggest: custom → <span class="badge badge-blue" style="font-size:10px">full</span> · base changed → <span class="badge badge-purple" style="font-size:10px">intersection</span> · &gt;1M rows → <span class="badge badge-gray" style="font-size:10px">count-only</span></span></div>
+    <div class="step"><i class="ti ti-select" aria-hidden="true"></i><span>Toolbar: Select All · Custom Only · Base Only · Clear</span></div>
+    <div class="step"><i class="ti ti-arrow-right" aria-hidden="true"></i><span>Footer sticky: X bảng selected · Tổng est. time · <strong>Run Compare</strong></span></div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><i class="ti ti-chevron-down" aria-hidden="true"></i><div class="divider-line"></div></div>
+
+<div class="card">
+  <div class="phase-header">
+    <div class="phase-num p4">4</div>
+    <div class="phase-title">Progress — phase 3</div>
+    <div class="phase-sub"><span class="badge badge-amber"><i class="ti ti-bolt" aria-hidden="true"></i>SSE stream</span></div>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-activity" aria-hidden="true"></i><span>Per-table row: table name · mode · status badge · progress bar · time elapsed</span></div>
+    <div class="step"><i class="ti ti-progress" aria-hidden="true"></i><span>Status pipeline: <span class="badge badge-gray" style="font-size:10px">queued</span> → <span class="badge badge-blue" style="font-size:10px">running</span> → <span class="badge badge-green" style="font-size:10px">done</span> / <span class="badge badge-amber" style="font-size:10px">warning</span> / <span class="badge" style="background:#FCEBEB;color:#A32D2D;font-size:10px">error</span></span></div>
+    <div class="step"><i class="ti ti-chart-bar" aria-hidden="true"></i><span>Live counter: Done X · Warning X · Error X · Total X</span></div>
+    <div class="step"><i class="ti ti-cpu" aria-hidden="true"></i><span>Backend: asyncio semaphore <code>MAX_WORKERS=4</code> — tránh overload DB</span></div>
+  </div>
+</div>
+
+<div class="divider"><div class="divider-line"></div><i class="ti ti-chevron-down" aria-hidden="true"></i><div class="divider-line"></div></div>
+
+<div class="card">
+  <div class="phase-header">
+    <div class="phase-num p5">5</div>
+    <div class="phase-title">Report</div>
+    <div class="phase-sub"><span class="badge badge-green"><i class="ti ti-file-export" aria-hidden="true"></i>export</span></div>
+  </div>
+  <div class="step-list">
+    <div class="step"><i class="ti ti-layout-cards" aria-hidden="true"></i><span>Summary cards: Tables OK · With warnings · Errors · Skipped</span></div>
+    <div class="step"><i class="ti ti-list-details" aria-hidden="true"></i><span>Per-table accordion: schema diff recap · row count diff · missing IDs · value mismatches</span></div>
+    <div class="step"><i class="ti ti-download" aria-hidden="true"></i><span>Export: Download JSON · Download HTML</span></div>
+  </div>
+</div>
+
+<p class="section-label" style="margin-top:1.25rem">Data compare logic</p>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <tr><th>Step</th><th>Mode áp dụng</th><th>Logic</th></tr>
+      <tr><td>COUNT check</td><td>full, intersection, count-only</td><td><code>COUNT(*)</code> cả 2 DB → Δ rows</td></tr>
+      <tr><td>Missing ID scan</td><td>full, intersection</td><td><code>EXCEPT</code> query — IDs có ở v17 mà không có v19 và ngược lại</td></tr>
+      <tr><td>Column scope resolve</td><td>full / intersection</td><td>full = tất cả cols · intersection = cols tồn tại ở cả 2</td></tr>
+      <tr><td>Value diff</td><td>full, intersection</td><td>Keyset pagination theo <code>id</code>, batch 1000 · MD5 row hash trước, chỉ fetch detail khi hash khác</td></tr>
+    </table>
+  </div>
+  <div style="margin-top:.75rem;padding:.6rem .75rem;background:var(--color-background-secondary);border-radius:var(--border-radius-md)">
+    <p style="font-size:12px;color:var(--color-text-secondary)"><i class="ti ti-info-circle" aria-hidden="true" style="font-size:13px"></i> Bảng không có cột <code>id</code> → tự động fallback về <strong>count-only</strong></p>
+  </div>
+</div>
+
+<p class="section-label" style="margin-top:1.25rem">Constraints</p>
+<div class="card">
+  <div class="constraints">
+    <div class="con-item"><i class="ti ti-check" aria-hidden="true"></i><span>DB connect qua host:port, cần read-only user</span></div>
+    <div class="con-item"><i class="ti ti-check" aria-hidden="true"></i><span>Không cần auth — internal tool</span></div>
+    <div class="con-item"><i class="ti ti-check" aria-hidden="true"></i><span>Job result giữ in-memory theo <code>job_id</code> UUID</span></div>
+    <div class="con-item"><i class="ti ti-check" aria-hidden="true"></i><span>Custom prefix: <code>nev_</code>, <code>astra_</code> — configurable</span></div>
+    <div class="con-item"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span><code>pg_class.reltuples</code> cho estimate — không chính xác 100%</span></div>
+    <div class="con-item"><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>Rename column không detect được tự động — report là dropped + added</span></div>
+  </div>
+</div>
+
+</div>

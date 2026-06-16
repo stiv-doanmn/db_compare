@@ -1,0 +1,44 @@
+{% set c = job.counters() %}
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+  <div class="stat-card"><div class="label-xs">Total</div><div class="stat-num text-ink">{{ c.total }}</div></div>
+  <div class="stat-card"><div class="label-xs">Done</div><div class="stat-num text-success">{{ c.done }}</div></div>
+  <div class="stat-card"><div class="label-xs">Warning</div><div class="stat-num text-mustard">{{ c.warning }}</div></div>
+  <div class="stat-card"><div class="label-xs">Error</div><div class="stat-num text-coral">{{ c.error }}</div></div>
+  <div class="stat-card"><div class="label-xs">Running</div><div class="stat-num text-info">{{ c.running }}</div></div>
+</div>
+
+<div class="card overflow-hidden">
+  <div class="table-scroll">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr><th class="th">Table</th><th class="th">Mode</th><th class="th">Status</th><th class="th w-1/3">Progress</th><th class="th text-right">Time</th></tr>
+      </thead>
+      <tbody>
+        {% for p in job.progress.values() | sort(attribute='sort_rank') %}
+        {% set bar = 'bg-info' %}
+        {% if p.status == 'done' %}{% set bar = 'bg-success' %}
+        {% elif p.status == 'warning' %}{% set bar = 'bg-mustard' %}
+        {% elif p.status == 'error' %}{% set bar = 'bg-coral' %}
+        {% elif p.status == 'queued' %}{% set bar = 'bg-borderStrong' %}{% endif %}
+        <tr class="rowx" data-name="{{ p.name|lower }}" data-status="{{ p.status }}">
+          <td class="td mono font-medium text-ink">{{ p.name }}</td>
+          <td class="td"><span class="tag tag-muted">{{ p.mode }}</span></td>
+          <td class="td">
+            {% if p.status == 'queued' %}<span class="tag tag-muted">queued</span>
+            {% elif p.status == 'running' %}<span class="tag tag-info">running</span>
+            {% elif p.status == 'done' %}<span class="tag tag-ok">done</span>
+            {% elif p.status == 'warning' %}<span class="tag tag-warn">warning</span>
+            {% else %}<span class="tag tag-err">error</span>{% endif %}
+          </td>
+          <td class="td">
+            <div class="h-1.5 w-full overflow-hidden rounded-full bg-surface-strong">
+              <div class="h-full rounded-full {{ bar }} transition-all duration-300" style="width: {{ 100 if p.status in ('done','warning','error') else p.percent }}%"></div>
+            </div>
+          </td>
+          <td class="td text-right mono text-xs text-muted">{{ "%.1f"|format(p.elapsed) }}s</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
