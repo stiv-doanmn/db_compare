@@ -41,7 +41,7 @@
   <div class="table-scroll">
     <table class="w-full border-collapse">
       <thead>
-        <tr><th class="th">Table</th><th class="th">Type</th><th class="th">Status</th><th class="th w-1/2">Thay đổi cột</th></tr>
+        <tr><th class="th">Table</th><th class="th">Type</th><th class="th">Status</th><th class="th w-2/5">Thay đổi cột</th><th class="th">Constraint</th></tr>
       </thead>
       <tbody id="schema-rows">
         {% for t in job.schema_tables.values() %}
@@ -81,8 +81,26 @@
                 {% else %}<span class="text-muted">~ {{ c.name }} default: {{ c.detail_a }} → {{ c.detail_b }}</span>{% endif %}
               </div>
               {% endfor %}
+              {% if t.constraints %}
+              <div class="mt-1.5 border-t border-hairline pt-1.5 text-muted normal-case">constraint:</div>
+              {% for c in t.constraints %}
+              <div>
+                {% if c.kind == 'added' %}<span class="text-success">+ [{{ c.type_label }}] {{ c.name }} <span class="text-muted">({{ c.def_b }})</span></span>
+                {% elif c.kind == 'dropped' %}<span class="text-coral">− [{{ c.type_label }}] {{ c.name }} <span class="text-muted">({{ c.def_a }})</span></span>
+                {% else %}<span class="text-[#8a5a00]">~ [{{ c.type_label }}] {{ c.name }}: {{ c.def_a }} → {{ c.def_b }}</span>{% endif %}
+              </div>
+              {% endfor %}
+              {% endif %}
             </div>
             {% endif %}
+          </td>
+          <td class="td">
+            <div class="flex flex-wrap items-center gap-1.5">
+              {% if t.con_added %}<span class="tag tag-ok">+{{ t.con_added|length }}</span>{% endif %}
+              {% if t.con_dropped %}<span class="tag tag-err">−{{ t.con_dropped|length }}</span>{% endif %}
+              {% if t.con_changed %}<span class="tag tag-warn">~{{ t.con_changed|length }}</span>{% endif %}
+              {% if not t.constraints %}<span class="text-borderStrong">—</span>{% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}

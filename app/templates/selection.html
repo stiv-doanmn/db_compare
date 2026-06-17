@@ -27,7 +27,6 @@
   <div class="mb-5 flex flex-wrap items-center gap-2">
     <span class="text-xs text-muted">Set mode cho bảng đã chọn:</span>
     <button type="button" class="chip" data-mode="full">Full</button>
-    <button type="button" class="chip" data-mode="intersection">Intersection</button>
     <button type="button" class="chip" data-mode="count-only">Count-only</button>
   </div>
 
@@ -42,7 +41,7 @@
             <th class="th text-right">{{ job.label_b }}</th>
             <th class="th text-right">Δ rows</th>
             <th class="th">Schema</th>
-            <th class="th">Mode</th>
+            <th class="th" style="width: 100px;">Mode</th>
             <th class="th text-right">Est. time</th>
           </tr>
         </thead>
@@ -67,8 +66,8 @@
               {% else %}<span class="tag tag-ok">identical</span>{% endif %}
             </td>
             <td class="td">
-              <select name="mode_{{ e.name }}" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="{{ [e.rows_a, e.rows_b]|max }}">
-                {% for m in ['full', 'intersection', 'count-only'] %}
+              <select style="width: 150px;" name="mode_{{ e.name }}" class="select mode-select !h-9 !py-0 text-[13px]" data-rows="{{ [e.rows_a, e.rows_b]|max }}">
+                {% for m in ['full', 'count-only'] %}
                 <option value="{{ m }}" {{ 'selected' if m == e.suggested_mode else '' }}>{{ m }}</option>
                 {% endfor %}
               </select>

@@ -11,9 +11,11 @@
     <p class="mt-2 text-sm text-muted mono">{{ job.label_a }} ({{ job.version_a }}) ↔ {{ job.label_b }} ({{ job.version_b }})</p>
   </div>
   {% if not standalone %}
-  <div class="flex gap-2">
-    <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm" download>Download JSON</a>
-    <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm" download>Download HTML</a>
+  <div class="flex flex-wrap gap-2">
+    <a href="/jobs/{{ job.id }}/report.xlsx" class="btn btn-primary btn-sm" download>Excel (.xlsx)</a>
+    <a href="/jobs/{{ job.id }}/report.csv" class="btn btn-secondary btn-sm" download>CSV</a>
+    <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm" download>HTML</a>
+    <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm" download>JSON</a>
   </div>
   {% endif %}
 </div>
@@ -29,6 +31,42 @@
   <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
   <input id="table-search" type="search" placeholder="Tìm theo tên bảng…" autocomplete="off"
          class="input mono" style="height:38px; width:260px; padding-left:34px;" />
+</div>
+
+<!-- Bảng tổng hợp — mọi bảng trên 1 lưới, tìm kiếm theo tên -->
+<div class="card overflow-hidden mb-6">
+  <div class="table-scroll">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr>
+          <th class="th">Table</th><th class="th">Mode</th><th class="th">Status</th>
+          <th class="th text-right">{{ job.label_a }}</th><th class="th text-right">{{ job.label_b }}</th>
+          <th class="th text-right">Δ rows</th>
+          <th class="th text-right">Chỉ ở A</th><th class="th text-right">Chỉ ở B</th><th class="th text-right">Giá trị khác</th>
+        </tr>
+      </thead>
+      <tbody id="summary-rows">
+        {% for p in job.progress.values() %}
+        <tr class="rowx" data-name="{{ p.name|lower }}">
+          <td class="td mono font-medium text-ink">{{ p.name }}</td>
+          <td class="td"><span class="tag tag-muted">{{ p.mode }}</span></td>
+          <td class="td">
+            {% if p.status == 'done' %}<span class="tag tag-ok">done</span>
+            {% elif p.status == 'warning' %}<span class="tag tag-warn">warning</span>
+            {% elif p.status == 'error' %}<span class="tag tag-err">error</span>
+            {% else %}<span class="tag tag-muted">{{ p.status }}</span>{% endif %}
+          </td>
+          <td class="td text-right mono tabular-nums text-body">{{ "{:,}".format(p.count_a) }}</td>
+          <td class="td text-right mono tabular-nums text-body">{{ "{:,}".format(p.count_b) }}</td>
+          <td class="td text-right mono tabular-nums {{ 'font-medium text-coral' if p.count_delta != 0 else 'text-borderStrong' }}">{{ '+' if p.count_delta > 0 else '' }}{{ "{:,}".format(p.count_delta) }}</td>
+          <td class="td text-right mono tabular-nums {{ 'text-coral' if p.only_in_a else 'text-borderStrong' }}">{{ p.only_in_a }}</td>
+          <td class="td text-right mono tabular-nums {{ 'text-info' if p.only_in_b else 'text-borderStrong' }}">{{ p.only_in_b }}</td>
+          <td class="td text-right mono tabular-nums {{ 'text-mustard' if p.value_mismatch else 'text-borderStrong' }}">{{ p.value_mismatch }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <div class="space-y-2.5" id="report-list">
@@ -111,12 +149,55 @@
 
       {% if sd and sd.status == 'changed' %}
       <div class="mt-5">
-        <div class="label-xs mb-2">Schema recap</div>
-        <div class="flex flex-wrap gap-1.5">
-          {% if sd.added %}<span class="tag tag-ok">+{{ sd.added|length }} cols</span>{% endif %}
-          {% if sd.dropped %}<span class="tag tag-err">−{{ sd.dropped|length }} cols</span>{% endif %}
-          {% if sd.type_changed %}<span class="tag tag-warn">{{ sd.type_changed|length }} type</span>{% endif %}
-          {% if sd.nullable_changed %}<span class="tag tag-info">{{ sd.nullable_changed|length }} nullable</span>{% endif %}
+        <div class="label-xs mb-2">Schema khác biệt <span class="text-muted normal-case">({{ job.label_a }} → {{ job.label_b }})</span></div>
+        <div class="overflow-x-auto rounded-md border border-hairline">
+          <table class="w-full border-collapse">
+            <thead>
+              <tr><th class="th">Cột</th><th class="th">Kiểu khác biệt</th><th class="th">{{ job.label_a }}</th><th class="th">{{ job.label_b }}</th></tr>
+            </thead>
+            <tbody>
+              {% for c in sd.added %}
+              <tr class="rowx"><td class="td mono text-ink">{{ c.name }}</td><td class="td"><span class="tag tag-ok">thêm mới ở {{ job.label_b }}</span></td><td class="td mono text-borderStrong">∅</td><td class="td mono text-info">{{ c.detail_b or '—' }}</td></tr>
+              {% endfor %}
+              {% for c in sd.dropped %}
+              <tr class="rowx"><td class="td mono text-ink">{{ c.name }}</td><td class="td"><span class="tag tag-err">bị bỏ ở {{ job.label_b }}</span></td><td class="td mono text-coral">{{ c.detail_a or '—' }}</td><td class="td mono text-borderStrong">∅</td></tr>
+              {% endfor %}
+              {% for c in sd.type_changed %}
+              <tr class="rowx"><td class="td mono text-ink">{{ c.name }}</td><td class="td"><span class="tag tag-warn">đổi kiểu</span></td><td class="td mono text-coral">{{ c.detail_a }}</td><td class="td mono text-info">{{ c.detail_b }}</td></tr>
+              {% endfor %}
+              {% for c in sd.nullable_changed %}
+              <tr class="rowx"><td class="td mono text-ink">{{ c.name }}</td><td class="td"><span class="tag tag-info">đổi nullable</span></td><td class="td mono text-body">nullable={{ c.detail_a }}</td><td class="td mono text-body">nullable={{ c.detail_b }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if sd and sd.constraints %}
+      <div class="mt-5">
+        <div class="label-xs mb-2">Constraint khác biệt <span class="text-muted normal-case">(FK / check / unique / PK)</span></div>
+        <div class="overflow-x-auto rounded-md border border-hairline">
+          <table class="w-full border-collapse">
+            <thead>
+              <tr><th class="th">Loại</th><th class="th">Tên constraint</th><th class="th">Khác biệt</th><th class="th">{{ job.label_a }}</th><th class="th">{{ job.label_b }}</th></tr>
+            </thead>
+            <tbody>
+              {% for c in sd.constraints %}
+              <tr class="rowx">
+                <td class="td"><span class="tag tag-muted">{{ c.type_label }}</span></td>
+                <td class="td mono text-ink">{{ c.name }}</td>
+                <td class="td">
+                  {% if c.kind == 'added' %}<span class="tag tag-ok">thêm mới ở {{ job.label_b }}</span>
+                  {% elif c.kind == 'dropped' %}<span class="tag tag-err">bị bỏ ở {{ job.label_b }}</span>
+                  {% else %}<span class="tag tag-warn">đổi định nghĩa</span>{% endif %}
+                </td>
+                <td class="td mono text-coral break-all">{{ c.def_a or '∅' }}</td>
+                <td class="td mono text-info break-all">{{ c.def_b or '∅' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
       </div>
       {% endif %}
@@ -131,8 +212,12 @@
     if (!inp) return;
     inp.addEventListener('input', e => {
       const q = e.target.value.trim().toLowerCase();
+      const match = el => (q === '' || (el.dataset.name || '').includes(q));
       document.querySelectorAll('#report-list > details').forEach(d => {
-        d.style.display = (q === '' || (d.dataset.name || '').includes(q)) ? '' : 'none';
+        d.style.display = match(d) ? '' : 'none';
+      });
+      document.querySelectorAll('#summary-rows > tr').forEach(tr => {
+        tr.style.display = match(tr) ? '' : 'none';
       });
     });
   })();

@@ -38,13 +38,13 @@ async def _fetch_has_id(pool: asyncpg.Pool) -> set[str]:
 def suggest_mode(*, is_custom: bool, status: str, max_rows: int, has_id: bool) -> str:
     if not has_id:
         # m2m rel / bảng không id: so theo composite key. Lớn quá thì chỉ count.
-        return "count-only" if max_rows > LARGE_TABLE_THRESHOLD else "intersection"
+        return "count-only" if max_rows > LARGE_TABLE_THRESHOLD else "full"
     if is_custom:
         return "full"  # bảng custom luôn full, kể cả khi lớn
     if max_rows > LARGE_TABLE_THRESHOLD:
         return "count-only"
     if status == "changed":
-        return "intersection"
+        return "full"
     return "count-only"  # base + identical → chỉ cần đối chiếu count
 
 

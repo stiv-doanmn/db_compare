@@ -11,11 +11,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
+from . import store
 from .config import DEFAULT_LABEL_A, DEFAULT_LABEL_B, DEFAULT_PREFIXES
+from .db.constraint_diff import run_constraint_diff
 from .db.data_compare import run_compare
 from .db.estimator import build_estimates, estimate_time
 from .db.pool import close_pool, create_pool, test_connection
 from .db.schema_diff import run_schema_diff
+from .export import build_csv, build_workbook
 from .jobs.manager import manager
 from .models import DSNConfig, TableProgress
 
@@ -32,11 +35,10 @@ async def _shutdown() -> None:
     await manager.close_all()
 
 
-def _not_found(job_id: str) -> HTMLResponse:
-    return HTMLResponse(
-        f"<h1>Job {job_id} không tồn tại</h1><a href='/'>Tạo job mới</a>",
-        status_code=404,
-    )
+def _not_found(job_id: str) -> RedirectResponse:
+    """Job không tồn tại (vd server restart → mất in-memory state) → auto tạo
+    job mới và đưa về bước Config thay vì báo 404."""
+    return RedirectResponse("/", status_code=303)
 
 
 # --------------------------------------------------------------------------- #
@@ -49,6 +51,16 @@ async def index():
     job.prefixes = list(DEFAULT_PREFIXES)
     job.label_a = DEFAULT_LABEL_A
     job.label_b = DEFAULT_LABEL_B
+
+    # Prefill từ kết nối đã lưu lần trước (store JSON, không có password).
+    saved = store.load_connections()
+    if saved:
+        ca, cb = saved["a"], saved["b"]
+        job.label_a = ca.get("label") or job.label_a
+        job.label_b = cb.get("label") or job.label_b
+        job.prefixes = saved.get("prefixes") or job.prefixes
+        job.dsn_a = DSNConfig(ca["host"], ca["port"], ca["dbname"], ca["user"], "")
+        job.dsn_b = DSNConfig(cb["host"], cb["port"], cb["dbname"], cb["user"], "")
     return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
 
@@ -88,6 +100,12 @@ async def connect(
     job.prefixes = [p.strip() for p in prefixes.split(",") if p.strip()]
     job.dsn_a = DSNConfig(a_host, a_port, a_dbname, a_user, a_password)
     job.dsn_b = DSNConfig(b_host, b_port, b_dbname, b_user, b_password)
+
+    # Lưu credential (KHÔNG password) để lần sau prefill form.
+    store.save_connections(
+        label_a=job.label_a, label_b=job.label_b,
+        dsn_a=job.dsn_a, dsn_b=job.dsn_b, prefixes=job.prefixes,
+    )
 
     # Đóng pool cũ nếu test lại
     await close_pool(job.pool_a)
@@ -130,6 +148,7 @@ async def run_schema_diff_route(job_id: str):
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
     await run_schema_diff(job)
+    await run_constraint_diff(job)
     await build_estimates(job)
     job.status = "schema"
     return RedirectResponse(f"/jobs/{job_id}/schema-diff", status_code=303)
@@ -202,33 +221,71 @@ async def progress_page(request: Request, job_id: str):
 
 
 # --------------------------------------------------------------------------- #
-# Phase 3 — SSE progress stream
+# Phase 3 — SSE progress stream (JSON, coalesced — patch DOM kiểu React)
 # --------------------------------------------------------------------------- #
-@app.get("/jobs/{job_id}/stream")
-async def stream(request: Request, job_id: str):
+def _progress_snapshot(job) -> dict:
+    """Snapshot gọn cho client patch DOM — không render HTML phía server."""
+    running = job.compare_finished_at is None and job.status != "done"
+    end = job.compare_finished_at or time.time()
+    elapsed = end - job.compare_started_at if job.compare_started_at else 0.0
+    return {
+        "status": job.status,
+        "running": running,
+        "elapsed": round(elapsed, 1),
+        "counters": job.counters(),
+        "report_url": f"/jobs/{job.id}/report",
+        "tables": [
+            {
+                "name": p.name,
+                "mode": p.mode,
+                "status": p.status,
+                "percent": 100 if p.status in ("done", "warning", "error") else p.percent,
+                "elapsed": round(p.elapsed, 1),
+                "count_a": p.count_a,
+                "count_b": p.count_b,
+                "delta": p.count_delta,
+                "only_in_a": p.only_in_a,
+                "only_in_b": p.only_in_b,
+                "value_mismatch": p.value_mismatch,
+                "resumed": p.resumed,
+                "note": p.note,
+                "error": p.error,
+            }
+            for p in job.progress.values()
+        ],
+    }
+
+
+# Tần suất tối đa đẩy snapshot xuống FE (giây) — coalesce burst notify → hết giật.
+_EMIT_INTERVAL = 0.25
+
+
+@app.get("/jobs/{job_id}/state")
+async def state_stream(request: Request, job_id: str):
     job = manager.get(job_id)
     if job is None:
         return _not_found(job_id)
 
-    def render_body() -> str:
-        return templates.get_template("partials/progress_body.html").render(job=job)
-
-    def render_done() -> str:
-        return templates.get_template("partials/progress_done.html").render(job=job)
-
     async def gen():
-        yield {"event": "progress", "data": render_body()}
+        # Phát ngay snapshot đầu để FE dựng bảng.
+        yield {"event": "state", "data": json.dumps(_progress_snapshot(job))}
         while True:
             if await request.is_disconnected():
                 break
+            # Chờ ít nhất 1 tick (hoặc heartbeat 1s), rồi gộp mọi tick tồn đọng.
             try:
                 await asyncio.wait_for(job.queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 pass
-            yield {"event": "progress", "data": render_body()}
+            else:
+                while not job.queue.empty():  # drain burst → 1 lần render
+                    job.queue.get_nowait()
+
+            yield {"event": "state", "data": json.dumps(_progress_snapshot(job))}
             if job.status == "done":
-                yield {"event": "done", "data": render_done()}
                 break
+            # Giới hạn nhịp phát: tránh flood FE khi tick dồn dập.
+            await asyncio.sleep(_EMIT_INTERVAL)
 
     return EventSourceResponse(gen())
 
@@ -300,5 +357,35 @@ async def report_html_download(request: Request, job_id: str):
         media_type="text/html",
         headers={
             "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.html"'
+        },
+    )
+
+
+@app.get("/jobs/{job_id}/report.xlsx")
+async def report_xlsx(job_id: str):
+    job = manager.get(job_id)
+    if job is None:
+        return _not_found(job_id)
+    content = build_workbook(job)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.xlsx"'
+        },
+    )
+
+
+@app.get("/jobs/{job_id}/report.csv")
+async def report_csv(job_id: str):
+    job = manager.get(job_id)
+    if job is None:
+        return _not_found(job_id)
+    content = build_csv(job)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.csv"'
         },
     )

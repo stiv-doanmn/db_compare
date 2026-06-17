@@ -6,7 +6,10 @@ services:
     environment:
       MAX_WORKERS: "4"
       BATCH_SIZE: "1000"
-      DEFAULT_PREFIXES: "nev_,astra_"
+      DEFAULT_PREFIXES: "nev_,astra_,helpdesk,audit,sh"
+    # Giữ store JSON (credential + checkpoint resume) qua các lần restart.
+    volumes:
+      - ./data:/app/data
     # Cho phép container kết nối tới Postgres chạy trên host (Windows/Mac):
     # dùng host "host.docker.internal" trong form DSN.
     extra_hosts:

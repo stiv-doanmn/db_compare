@@ -7,6 +7,16 @@ from ..config import POOL_MAX_SIZE, POOL_MIN_SIZE
 from ..models import DSNConfig
 
 
+# Ép cách render text giống nhau ở CẢ 2 DB để row-hash không lệch chỉ vì khác
+# phiên bản PostgreSQL (số thực, ngày giờ, interval). Áp cho mọi connection.
+_SERVER_SETTINGS = {
+    "DateStyle": "ISO, YMD",
+    "TimeZone": "UTC",
+    "IntervalStyle": "iso_8601",
+    "extra_float_digits": "1",  # shortest round-trip, đồng nhất PG12+
+}
+
+
 async def create_pool(dsn: DSNConfig) -> asyncpg.Pool:
     """Tạo pool. Đặt timeout ngắn để test connection fail nhanh."""
     return await asyncpg.create_pool(
@@ -19,6 +29,7 @@ async def create_pool(dsn: DSNConfig) -> asyncpg.Pool:
         max_size=POOL_MAX_SIZE,
         command_timeout=60,
         timeout=10,
+        server_settings=_SERVER_SETTINGS,
     )
 
 

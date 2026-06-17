@@ -40,11 +40,28 @@ class ColumnDiff:
 
 
 @dataclass
+class ConstraintDiff:
+    name: str
+    # Loại constraint: p=primary key, u=unique, f=foreign key, c=check.
+    contype: str
+    kind: str  # added | dropped | changed
+    def_a: Optional[str] = None
+    def_b: Optional[str] = None
+
+    _LABELS = {"p": "primary key", "u": "unique", "f": "foreign key", "c": "check"}
+
+    @property
+    def type_label(self) -> str:
+        return self._LABELS.get(self.contype, self.contype)
+
+
+@dataclass
 class TableSchemaDiff:
     name: str
     status: str  # identical | changed | new | dropped
     is_custom: bool
     columns: list[ColumnDiff] = field(default_factory=list)
+    constraints: list[ConstraintDiff] = field(default_factory=list)
 
     @property
     def added(self) -> list[ColumnDiff]:
@@ -61,6 +78,19 @@ class TableSchemaDiff:
     @property
     def nullable_changed(self) -> list[ColumnDiff]:
         return [c for c in self.columns if c.kind == "nullable_changed"]
+
+    # --- constraint diff helpers ---
+    @property
+    def con_added(self) -> list[ConstraintDiff]:
+        return [c for c in self.constraints if c.kind == "added"]
+
+    @property
+    def con_dropped(self) -> list[ConstraintDiff]:
+        return [c for c in self.constraints if c.kind == "dropped"]
+
+    @property
+    def con_changed(self) -> list[ConstraintDiff]:
+        return [c for c in self.constraints if c.kind == "changed"]
 
 
 @dataclass
@@ -96,6 +126,11 @@ class TableProgress:
     column_scope: list[str] = field(default_factory=list)
     note: str = ""
     error: str = ""
+    # Checkpoint resume: id lớn nhất đã so khớp xong cả 2 bên. Lần chạy sau
+    # tiếp tục từ id > resume_after_id (compare luôn sort id tăng dần).
+    resume_after_id: Optional[int] = None
+    # True nếu lần chạy này tiếp tục từ checkpoint cũ thay vì quét lại từ đầu.
+    resumed: bool = False
 
     @property
     def elapsed(self) -> float:
@@ -156,6 +191,13 @@ class JobState:
     @property
     def both_connected(self) -> bool:
         return self.connected_a and self.connected_b
+
+    def pair_key(self) -> str:
+        """Khoá định danh cặp DB để gom checkpoint (độc lập với job_id)."""
+        def part(d: Optional[DSNConfig]) -> str:
+            return f"{d.host}:{d.port}/{d.dbname}" if d else "?"
+
+        return f"{part(self.dsn_a)}__{part(self.dsn_b)}"
 
     def is_custom(self, table: str) -> bool:
         return any(table.startswith(p) for p in self.prefixes)
