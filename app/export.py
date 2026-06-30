@@ -52,6 +52,7 @@ _FILL_BACK = PatternFill("solid", fgColor="F4D35E")  # nút back nổi bật
 
 _SUMMARY_TITLE = "Tổng quan"
 _CONSTRAINT_TITLE = "Constraint Summary"
+_UNSET = object()  # sentinel cho group-id ban đầu (sọc màu record diff)
 
 _thin = Side(style="thin", color=_GREY_LINE)
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -106,26 +107,27 @@ def _table_rowcount(p) -> int:
 
 
 def _iter_record_rows(job, p):
-    """Yield lần lượt từng dòng record-diff, đọc stream từ spill file (không gom RAM)."""
+    """Yield (group_id, cells) cho từng dòng record-diff, stream từ spill.
+
+    group_id để export tô màu sọc trắng/xám theo NHÓM: các dòng cùng 1 id (vd 1
+    bản ghi mismatch có nhiều cột khác) cùng màu; id kế bên đổi màu.
+    """
     pair = job.pair_key()
     la, lb = job.label_a, job.label_b
-    blank = [(None, None)] * 3
 
     for key in spill.iter_records(pair, p.name, "only_a"):
-        yield [(f"Chỉ có ở {la}", None), (str(key), None), *blank]
+        yield ("a", key), [f"Chỉ có ở {la}", str(key), None, None, None]
     for key in spill.iter_records(pair, p.name, "only_b"):
-        yield [(f"Chỉ có ở {lb}", None), (str(key), None), *blank]
+        yield ("b", key), [f"Chỉ có ở {lb}", str(key), None, None, None]
     for rec in spill.iter_records(pair, p.name, "mismatch_detail"):
         rid = rec.get("id")
         diffs = rec.get("diffs") or []
         if diffs:
             for d in diffs:
-                yield [
-                    ("Cùng id, khác giá trị", None), (str(rid), None),
-                    (d.get("col"), None), (d.get("a"), _FILL_A), (d.get("b"), _FILL_B),
-                ]
+                yield ("m", rid), ["Cùng id, khác giá trị", str(rid),
+                                   d.get("col"), d.get("a"), d.get("b")]
         else:  # không so được cột (1 bên thiếu id) → vẫn liệt kê id
-            yield [("Cùng id, khác giá trị", None), (str(rid), None), *blank]
+            yield ("m", rid), ["Cùng id, khác giá trị", str(rid), None, None, None]
 
 
 # --------------------------------------------------------------------------- #
@@ -395,8 +397,14 @@ def _write_record_block(
     r += 1
     start = r
     written = 0
-    for spec in row_iter:
-        for col, (val, fill) in enumerate(spec, start=1):
+    prev_gid = _UNSET
+    stripe = False
+    for gid, cells in row_iter:
+        if gid != prev_gid:  # đổi nhóm id → lật màu sọc
+            stripe = not stripe
+            prev_gid = gid
+        fill = _FILL_BAND if stripe else None  # xám / trắng
+        for col, val in enumerate(cells, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             if fill is not None:
                 cell.fill = fill

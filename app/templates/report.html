@@ -14,10 +14,10 @@
   </div>
   {% if not standalone %}
   <div class="flex flex-wrap gap-2">
-    <a href="/jobs/{{ job.id }}/report.zip" class="btn btn-primary btn-sm" download>Excel (.zip)</a>
-    <a href="/jobs/{{ job.id }}/report.csv" class="btn btn-secondary btn-sm" download>CSV</a>
-    <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm" download>HTML</a>
-    <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm" download>JSON</a>
+    <a href="/jobs/{{ job.id }}/report.zip" class="btn btn-primary btn-sm js-download" download>Excel (.zip)</a>
+    <a href="/jobs/{{ job.id }}/report.csv" class="btn btn-secondary btn-sm js-download" download>CSV</a>
+    <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm js-download" download>HTML</a>
+    <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm js-download" download>JSON</a>
   </div>
   {% endif %}
 </div>
@@ -209,7 +209,49 @@
   {% endfor %}
 </div>
 
+<!-- Overlay loading khi tải file export -->
+<div id="dl-overlay" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(24,29,38,.55); align-items:center; justify-content:center;">
+  <div style="background:#fff; padding:22px 28px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.28); display:flex; gap:14px; align-items:center;">
+    <span style="width:22px; height:22px; border:3px solid #DDDDDD; border-top-color:#181D26; border-radius:50%; animation:dlspin .7s linear infinite;"></span>
+    <span id="dl-text" style="color:#181D26; font-size:14px; font-weight:500;">Đang tạo file tải…</span>
+  </div>
+</div>
+<style>@keyframes dlspin{to{transform:rotate(360deg)}}</style>
+
 <script>
+  (function () {
+    const overlay = document.getElementById('dl-overlay');
+    const text = document.getElementById('dl-text');
+    const show = m => { if (m && text) text.textContent = m; overlay.style.display = 'flex'; };
+    const hide = () => { overlay.style.display = 'none'; };
+    const filenameFrom = (resp, url) => {
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^"]+)"?/i);
+      return m ? decodeURIComponent(m[1]) : url.split('/').pop();
+    };
+    document.querySelectorAll('a.js-download').forEach(a => {
+      a.addEventListener('click', async e => {
+        e.preventDefault();
+        const url = a.getAttribute('href');
+        show('Đang tạo file tải…');
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const blob = await resp.blob();
+          const obj = URL.createObjectURL(blob);
+          const tmp = document.createElement('a');
+          tmp.href = obj; tmp.download = filenameFrom(resp, url);
+          document.body.appendChild(tmp); tmp.click(); tmp.remove();
+          setTimeout(() => URL.revokeObjectURL(obj), 5000);
+        } catch (err) {
+          alert('Tải thất bại: ' + err.message);
+        } finally {
+          hide();
+        }
+      });
+    });
+  })();
+
   (function () {
     const inp = document.getElementById('table-search');
     if (!inp) return;
