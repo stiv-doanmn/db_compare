@@ -11,14 +11,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from . import store
+from . import spill, store
 from .config import DEFAULT_LABEL_A, DEFAULT_LABEL_B, DEFAULT_PREFIXES
 from .db.constraint_diff import run_constraint_diff
 from .db.data_compare import run_compare
 from .db.estimator import build_estimates, estimate_time
 from .db.pool import close_pool, create_pool, test_connection
 from .db.schema_diff import run_schema_diff
-from .export import build_csv, build_workbook
+from .export import build_csv, build_workbook_zip
 from .jobs.manager import manager
 from .models import DSNConfig, TableProgress
 
@@ -361,17 +361,18 @@ async def report_html_download(request: Request, job_id: str):
     )
 
 
-@app.get("/jobs/{job_id}/report.xlsx")
+@app.get("/jobs/{job_id}/report.zip")
 async def report_xlsx(job_id: str):
     job = manager.get(job_id)
     if job is None:
         return _not_found(job_id)
-    content = build_workbook(job)
+    # Excel giới hạn ~1tr dòng/sheet → report là gói .zip chứa 1+ file .xlsx.
+    content = build_workbook_zip(job)
     return Response(
         content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.xlsx"'
+            "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.zip"'
         },
     )
 
@@ -389,3 +390,16 @@ async def report_csv(job_id: str):
             "Content-Disposition": f'attachment; filename="compare_{job_id[:8]}.csv"'
         },
     )
+
+
+@app.post("/jobs/{job_id}/spill/clear")
+async def clear_spill(job_id: str):
+    """Dọn toàn bộ spill file của cặp DB này để giải phóng đĩa.
+
+    Lưu ý: sau khi dọn, export Excel/CSV sẽ KHÔNG còn dữ liệu chi tiết (chỉ còn
+    số liệu tổng hợp) cho tới khi chạy so sánh lại."""
+    job = manager.get(job_id)
+    if job is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    spill.clear_pair(job.pair_key())
+    return JSONResponse({"status": "cleared"})

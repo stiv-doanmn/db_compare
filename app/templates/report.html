@@ -5,6 +5,8 @@
 
 {% block content %}
 {% set c = job.counters() %}
+{# HTML chỉ hiển thị tối đa HTML_MAX bản ghi mỗi loại — full nằm ở Excel (.zip). #}
+{% set HTML_MAX = 100 %}
 <div class="flex flex-wrap items-end justify-between gap-4 mb-6">
   <div>
     <h1 class="text-[28px] font-normal tracking-tight text-ink">Báo cáo so sánh</h1>
@@ -12,7 +14,7 @@
   </div>
   {% if not standalone %}
   <div class="flex flex-wrap gap-2">
-    <a href="/jobs/{{ job.id }}/report.xlsx" class="btn btn-primary btn-sm" download>Excel (.xlsx)</a>
+    <a href="/jobs/{{ job.id }}/report.zip" class="btn btn-primary btn-sm" download>Excel (.zip)</a>
     <a href="/jobs/{{ job.id }}/report.csv" class="btn btn-secondary btn-sm" download>CSV</a>
     <a href="/jobs/{{ job.id }}/report.html" class="btn btn-secondary btn-sm" download>HTML</a>
     <a href="/jobs/{{ job.id }}/report.json" class="btn btn-secondary btn-sm" download>JSON</a>
@@ -112,16 +114,17 @@
 
       {% if p.mode != 'count-only' and (p.sample_only_a or p.sample_only_b or p.sample_mismatch) %}
       <div class="mt-5 space-y-1.5 text-xs mono">
-        {% if p.sample_only_a %}<div><span class="text-coral">only {{ job.label_a }} ids:</span> <span class="text-body">{{ p.sample_only_a|join(', ') }}{% if p.only_in_a > p.sample_only_a|length %} …{% endif %}</span></div>{% endif %}
-        {% if p.sample_only_b %}<div><span class="text-info">only {{ job.label_b }} ids:</span> <span class="text-body">{{ p.sample_only_b|join(', ') }}{% if p.only_in_b > p.sample_only_b|length %} …{% endif %}</span></div>{% endif %}
-        {% if p.sample_mismatch %}<div><span class="text-[#8a5a00]">mismatch ids:</span> <span class="text-body">{{ p.sample_mismatch|join(', ') }}{% if p.value_mismatch > p.sample_mismatch|length %} …{% endif %}</span></div>{% endif %}
+        {% if p.sample_only_a %}<div><span class="text-coral">only {{ job.label_a }} ids:</span> <span class="text-body">{{ p.sample_only_a[:HTML_MAX]|join(', ') }}{% if p.only_in_a > HTML_MAX %} … (+{{ "{:,}".format(p.only_in_a - HTML_MAX) }} nữa){% endif %}</span></div>{% endif %}
+        {% if p.sample_only_b %}<div><span class="text-info">only {{ job.label_b }} ids:</span> <span class="text-body">{{ p.sample_only_b[:HTML_MAX]|join(', ') }}{% if p.only_in_b > HTML_MAX %} … (+{{ "{:,}".format(p.only_in_b - HTML_MAX) }} nữa){% endif %}</span></div>{% endif %}
+        {% if p.sample_mismatch %}<div><span class="text-[#8a5a00]">mismatch ids:</span> <span class="text-body">{{ p.sample_mismatch[:HTML_MAX]|join(', ') }}{% if p.value_mismatch > HTML_MAX %} … (+{{ "{:,}".format(p.value_mismatch - HTML_MAX) }} nữa){% endif %}</span></div>{% endif %}
         {% if p.column_scope %}<div class="text-muted">scope: {{ p.column_scope|length }} cột hash</div>{% endif %}
+        {% if p.only_in_a > HTML_MAX or p.only_in_b > HTML_MAX or p.value_mismatch > HTML_MAX %}<div class="text-muted" style="font-family:inherit">Hiển thị tối đa {{ HTML_MAX }} id mỗi loại — tải Excel (.zip) để xem đầy đủ.</div>{% endif %}
       </div>
       {% endif %}
 
       {% if p.mismatch_details %}
       <div class="mt-5">
-        <div class="label-xs mb-2">Bản ghi cùng id, khác giá trị <span class="text-muted normal-case">(mẫu {{ p.mismatch_details|length }}{% if p.value_mismatch > p.mismatch_details|length %}/{{ p.value_mismatch }}{% endif %} bản ghi)</span></div>
+        <div class="label-xs mb-2">Bản ghi cùng id, khác giá trị <span class="text-muted normal-case">(hiển thị {{ [p.mismatch_details|length, HTML_MAX]|min }}{% if p.value_mismatch > HTML_MAX %} / {{ "{:,}".format(p.value_mismatch) }}{% endif %} bản ghi — full ở Excel)</span></div>
         <div class="overflow-x-auto rounded-md border border-hairline">
           <table class="w-full border-collapse">
             <thead>
@@ -131,7 +134,7 @@
               </tr>
             </thead>
             <tbody>
-              {% for rec in p.mismatch_details %}
+              {% for rec in p.mismatch_details[:HTML_MAX] %}
               {% for d in rec.diffs %}
               <tr class="rowx">
                 {% if loop.first %}<td class="td mono font-medium text-ink" rowspan="{{ rec.diffs|length }}">{{ rec.id }}</td>{% endif %}

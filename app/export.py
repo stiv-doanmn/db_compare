@@ -1,19 +1,28 @@
-"""Phase 5 export — Excel (.xlsx) và CSV báo cáo so sánh.
+"""Phase 5 export — Excel (.xlsx, gói .zip) và CSV báo cáo so sánh.
 
-Excel: 1 sheet tổng quan + mỗi bảng 1 sheet riêng, tô màu theo trạng thái,
-chỉ rõ khác ở đâu (chỉ có ở A / chỉ có ở B / cùng id khác giá trị → cột nào).
+Toàn bộ bản ghi sai lệch nằm ở spill file trên đĩa (xem app/spill.py); export
+ĐỌC STREAM từ đó nên RAM chỉ giữ 1 workbook ≤ MAX_SAMPLES dòng tại một thời điểm.
+
+Excel: report CHIA THÀNH NHIỀU FILE .xlsx (mỗi file ≤ MAX_SAMPLES dòng) gói .zip:
+- File đầu: sheet "Tổng quan" + sheet "Constraint Summary" + các sheet bảng.
+- Mỗi bảng 1 sheet riêng; bảng có quá nhiều dòng diff bị cắt thành nhiều sheet
+  "(2)", "(3)"… và tràn sang file kế khi vượt MAX_SAMPLES (vd 800k → 500k+300k).
 CSV: 1 file phẳng, mỗi dòng là 1 phát hiện (finding) — dễ import/pivot.
 """
 from __future__ import annotations
 
 import csv
 import io
+import zipfile
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.worksheet.worksheet import Worksheet
+
+from . import spill
+from .config import MAX_SAMPLES
 
 # ----- Bảng màu chuẩn doanh nghiệp ----------------------------------------- #
 _NAVY = "181D26"
@@ -42,6 +51,7 @@ _FONT_BACK = Font(name="Calibri", size=11, bold=True, color=_NAVY, underline="si
 _FILL_BACK = PatternFill("solid", fgColor="F4D35E")  # nút back nổi bật
 
 _SUMMARY_TITLE = "Tổng quan"
+_CONSTRAINT_TITLE = "Constraint Summary"
 
 _thin = Side(style="thin", color=_GREY_LINE)
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -62,7 +72,7 @@ def _status_label(p) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Excel
+# Excel — helpers
 # --------------------------------------------------------------------------- #
 def _header_row(ws: Worksheet, row: int, headers: list[str]) -> None:
     for col, text in enumerate(headers, start=1):
@@ -85,8 +95,45 @@ def _safe_sheet_title(name: str, used: set[str]) -> str:
     return title
 
 
-def _build_summary(ws: Worksheet, job, titles: dict[str, str]) -> None:
-    ws.title = _SUMMARY_TITLE
+# --------------------------------------------------------------------------- #
+# Excel — record diff rows (stream từ spill; mỗi row: list[(value, fill|None)])
+# --------------------------------------------------------------------------- #
+def _table_rowcount(p) -> int:
+    """Tổng số dòng record-diff của 1 bảng (tính từ counters, không đọc spill)."""
+    if p.mode == "count-only":
+        return 0
+    return (p.only_in_a or 0) + (p.only_in_b or 0) + (p.mismatch_row_count or 0)
+
+
+def _iter_record_rows(job, p):
+    """Yield lần lượt từng dòng record-diff, đọc stream từ spill file (không gom RAM)."""
+    pair = job.pair_key()
+    la, lb = job.label_a, job.label_b
+    blank = [(None, None)] * 3
+
+    for key in spill.iter_records(pair, p.name, "only_a"):
+        yield [(f"Chỉ có ở {la}", None), (str(key), None), *blank]
+    for key in spill.iter_records(pair, p.name, "only_b"):
+        yield [(f"Chỉ có ở {lb}", None), (str(key), None), *blank]
+    for rec in spill.iter_records(pair, p.name, "mismatch_detail"):
+        rid = rec.get("id")
+        diffs = rec.get("diffs") or []
+        if diffs:
+            for d in diffs:
+                yield [
+                    ("Cùng id, khác giá trị", None), (str(rid), None),
+                    (d.get("col"), None), (d.get("a"), _FILL_A), (d.get("b"), _FILL_B),
+                ]
+        else:  # không so được cột (1 bên thiếu id) → vẫn liệt kê id
+            yield [("Cùng id, khác giá trị", None), (str(rid), None), *blank]
+
+
+# --------------------------------------------------------------------------- #
+# Excel — sheet Tổng quan
+# --------------------------------------------------------------------------- #
+def _build_summary(ws: Worksheet, job, titles: dict, first_part: dict) -> None:
+    """titles: table -> sheet title (chỉ bảng có sheet trong CÙNG file → link nội bộ).
+    first_part: table -> chỉ số file (0-based) chứa sheet đầu của bảng đó."""
     ws.sheet_view.showGridLines = False
     c = job.counters()
 
@@ -111,14 +158,16 @@ def _build_summary(ws: Worksheet, job, titles: dict[str, str]) -> None:
 
     r = hr + 1
     for p in job.progress.values():
-        # Tên bảng = hyperlink nội bộ → nhảy tới sheet của bảng đó.
         name_cell = ws.cell(row=r, column=1, value=p.name)
         title = titles.get(p.name)
-        if title:
+        if title:  # sheet nằm cùng file → hyperlink nội bộ
             name_cell.hyperlink = Hyperlink(
                 ref=name_cell.coordinate, location=f"'{title}'!A1", display=p.name
             )
             name_cell.font = _FONT_LINK
+        elif first_part.get(p.name):  # sheet ở file phần khác (>0)
+            name_cell.value = f"{p.name}  (xem file phần {first_part[p.name] + 1})"
+            name_cell.font = _FONT_BOLD
         else:
             name_cell.font = _FONT_BOLD
         ws.cell(row=r, column=2, value=p.mode)
@@ -147,30 +196,108 @@ def _build_summary(ws: Worksheet, job, titles: dict[str, str]) -> None:
                     cell.fill = _FILL_BAND
         r += 1
 
-    widths = [34, 13, 14, 16, 16, 12, 16, 16, 14, 50]
+    widths = [40, 13, 14, 16, 16, 12, 16, 16, 14, 50]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=hr + 1, column=1)
     ws.auto_filter.ref = f"A{hr}:J{r - 1}"
 
 
-def _build_table_sheet(ws: Worksheet, job, p) -> None:
+# --------------------------------------------------------------------------- #
+# Excel — sheet tổng hợp thay đổi constraint
+# --------------------------------------------------------------------------- #
+_CONSTRAINT_HEAD = [
+    "No.", "Object Type", "Name", "Change Type", "Description", "Related Issues",
+    "Solution Temp", "Final Solution", "Status", "Solution Description", "Module",
+    "Used in AstraLink", "Astralink module", "File / Line",
+]
+# kind (ConstraintDiff) -> Change Type
+_CHANGE_TYPE = {"added": "ADDED", "dropped": "REMOVED", "changed": "SCHEMA_CHANGED"}
+
+
+def _build_constraint_summary(ws: Worksheet, job) -> None:
     ws.sheet_view.showGridLines = False
+    ws["A1"] = "TỔNG HỢP THAY ĐỔI CONSTRAINT"
+    ws["A1"].font = _FONT_TITLE
+    ws["A2"] = f"{job.label_a}  →  {job.label_b}"
+    ws["A2"].font = _FONT_MUTED
 
-    # Nút quay về sheet Tổng quan (ô F1 nổi bật, có hyperlink nội bộ).
-    back = ws.cell(row=1, column=6, value="← Về Tổng quan")
-    back.hyperlink = Hyperlink(
-        ref=back.coordinate, location=f"'{_SUMMARY_TITLE}'!A1", display="← Về Tổng quan"
-    )
-    back.font = _FONT_BACK
-    back.fill = _FILL_BACK
-    back.alignment = _CENTER
-    back.border = _BORDER
+    hr = 4
+    _header_row(ws, hr, _CONSTRAINT_HEAD)
 
-    ws["A1"] = p.name
+    r = hr + 1
+    no = 1
+    schema_tables = getattr(job, "schema_tables", {}) or {}
+    for tname, td in schema_tables.items():
+        for c in getattr(td, "constraints", []):
+            desc = f"[{tname}] {c.type_label}"
+            if c.def_a or c.def_b:
+                desc += (
+                    f" · {job.label_a}: {c.def_a or '∅'}"
+                    f" | {job.label_b}: {c.def_b or '∅'}"
+                )
+            values = [
+                no,                                          # No.
+                "CONSTRAINTS",                               # Object Type
+                c.name,                                      # Name
+                _CHANGE_TYPE.get(c.kind, c.kind.upper()),    # Change Type
+                desc,                                        # Description
+                "", "", "", "", "", "", "", "", "",          # các cột để trống
+            ]
+            for col, val in enumerate(values, start=1):
+                cell = ws.cell(row=r, column=col, value=val)
+                cell.border = _BORDER
+                cell.alignment = _LEFT if col not in (1,) else _CENTER
+            r += 1
+            no += 1
+
+    if no == 1:  # không có constraint nào lệch
+        ws.cell(row=r, column=1, value="Không có thay đổi constraint.").font = _FONT_OK
+
+    widths = [6, 14, 30, 16, 60, 14, 14, 14, 12, 22, 16, 16, 18, 18]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = ws.cell(row=hr + 1, column=1)
+    if no > 1:
+        ws.auto_filter.ref = f"A{hr}:N{r - 1}"
+
+
+# --------------------------------------------------------------------------- #
+# Excel — sheet chi tiết 1 bảng (có thể là 1 phần của bảng bị cắt)
+# --------------------------------------------------------------------------- #
+def _build_table_sheet(
+    ws: Worksheet, job, p, row_iter, max_rows, idx: int, total: int, summary_in_file: bool
+) -> None:
+    """Lấy tối đa max_rows dòng từ row_iter (None = lấy hết) ghi vào sheet này.
+    idx/total: phần idx+1/total của bảng khi bị cắt nhiều sheet."""
+    ws.sheet_view.showGridLines = False
+    is_first = idx == 0
+
+    if summary_in_file:
+        back = ws.cell(row=1, column=6, value="← Về Tổng quan")
+        back.hyperlink = Hyperlink(
+            ref=back.coordinate, location=f"'{_SUMMARY_TITLE}'!A1", display="← Về Tổng quan"
+        )
+        back.font = _FONT_BACK
+        back.fill = _FILL_BACK
+        back.alignment = _CENTER
+        back.border = _BORDER
+
+    suffix = "" if total == 1 else f"  (phần {idx + 1}/{total})"
+    ws["A1"] = p.name + suffix
     ws["A1"].font = _FONT_TITLE
     ws["A2"] = f"Mode: {p.mode}   •   Trạng thái: {_status_label(p)}"
     ws["A2"].font = _STATUS_FONT.get(p.status, _FONT_MUTED)
+
+    if not is_first:
+        # Sheet tiếp theo: chỉ ghi tiếp record-diff, không lặp lại metadata.
+        ws["A3"] = "Tiếp theo danh sách bản ghi khác biệt từ phần trước."
+        ws["A3"].font = _FONT_MUTED
+        _write_record_block(ws, job, row_iter, max_rows, start_row=5, header_only_if_empty=False)
+        for i, w in enumerate([28, 26, 30, 36, 36, 18], start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        return
+
     if p.note:
         ws["A3"] = f"Ghi chú: {p.note}"
         ws["A3"].font = _FONT_MUTED
@@ -194,49 +321,7 @@ def _build_table_sheet(ws: Worksheet, job, p) -> None:
     for col in range(1, 5):
         ws.cell(row=r, column=col).border = _BORDER
 
-    # Khối khác biệt theo id (chỉ khi không phải count-only)
-    if p.mode != "count-only":
-        r += 3
-        ws.cell(row=r, column=1, value="Bản ghi khác biệt").font = _FONT_BOLD
-        r += 1
-        _header_row(ws, r, ["Loại khác biệt", "id / key", "Cột", f"Giá trị {job.label_a}", f"Giá trị {job.label_b}"])
-        r += 1
-        start = r
-
-        for key in p.sample_only_a:
-            ws.cell(row=r, column=1, value=f"Chỉ có ở {job.label_a}")
-            ws.cell(row=r, column=2, value=str(key))
-            r += 1
-        for key in p.sample_only_b:
-            ws.cell(row=r, column=1, value=f"Chỉ có ở {job.label_b}")
-            ws.cell(row=r, column=2, value=str(key))
-            r += 1
-        # Cùng id, khác giá trị — chỉ rõ cột nào lệch
-        if p.mismatch_details:
-            for rec in p.mismatch_details:
-                for d in rec["diffs"]:
-                    ws.cell(row=r, column=1, value="Cùng id, khác giá trị")
-                    ws.cell(row=r, column=2, value=str(rec["id"]))
-                    ws.cell(row=r, column=3, value=d["col"])
-                    va = ws.cell(row=r, column=4, value=d["a"])
-                    vb = ws.cell(row=r, column=5, value=d["b"])
-                    va.fill, vb.fill = _FILL_A, _FILL_B
-                    r += 1
-        elif p.sample_mismatch:  # không lấy được chi tiết cột → liệt kê id
-            for key in p.sample_mismatch:
-                ws.cell(row=r, column=1, value="Cùng id, khác giá trị")
-                ws.cell(row=r, column=2, value=str(key))
-                r += 1
-
-        if r == start:
-            ws.cell(row=r, column=1, value="Không có khác biệt theo bản ghi.").font = _FONT_OK
-            r += 1
-        else:
-            for rr in range(start, r):
-                for col in range(1, 6):
-                    ws.cell(row=rr, column=col).border = _BORDER
-
-    # Khối schema khác biệt — cột nào đổi (thêm / bỏ / đổi kiểu / nullable)
+    # Khối schema khác biệt
     sd = (getattr(job, "schema_tables", {}) or {}).get(p.name)
     if sd and getattr(sd, "columns", None):
         r += 3
@@ -263,7 +348,7 @@ def _build_table_sheet(ws: Worksheet, job, p) -> None:
             for col in range(1, 5):
                 ws.cell(row=rr, column=col).border = _BORDER
 
-    # Khối constraint khác biệt — FK / check / unique / PK
+    # Khối constraint khác biệt
     if sd and getattr(sd, "constraints", None):
         r += 3
         ws.cell(row=r, column=1, value="Constraint khác biệt").font = _FONT_BOLD
@@ -288,27 +373,135 @@ def _build_table_sheet(ws: Worksheet, job, p) -> None:
             for col in range(1, 6):
                 ws.cell(row=rr, column=col).border = _BORDER
 
+    # Khối record diff (chỉ khi không phải count-only)
+    if p.mode != "count-only":
+        r += 3
+        _write_record_block(ws, job, row_iter, max_rows, start_row=r, header_only_if_empty=True)
+
     for i, w in enumerate([28, 26, 30, 36, 36, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def build_workbook(job) -> bytes:
-    wb = Workbook()
-    summary_ws = wb.active
-    summary_ws.title = _SUMMARY_TITLE
+def _write_record_block(
+    ws: Worksheet, job, row_iter, max_rows, start_row: int, header_only_if_empty: bool
+) -> None:
+    r = start_row
+    ws.cell(row=r, column=1, value="Bản ghi khác biệt").font = _FONT_BOLD
+    r += 1
+    _header_row(ws, r, [
+        "Loại khác biệt", "id / key", "Cột",
+        f"Giá trị {job.label_a}", f"Giá trị {job.label_b}",
+    ])
+    r += 1
+    start = r
+    written = 0
+    for spec in row_iter:
+        for col, (val, fill) in enumerate(spec, start=1):
+            cell = ws.cell(row=r, column=col, value=val)
+            if fill is not None:
+                cell.fill = fill
+        r += 1
+        written += 1
+        if max_rows is not None and written >= max_rows:
+            break
+    # Không kẻ border từng dòng record (có thể tới hàng trăm nghìn) — giữ tốc độ.
+    if r == start and header_only_if_empty:
+        ws.cell(row=r, column=1, value="Không có khác biệt theo bản ghi.").font = _FONT_OK
 
-    # Tính trước tên sheet (đã sanitize/khử trùng) cho từng bảng để summary
-    # biết link tới đâu trước khi tạo sheet.
-    used: set[str] = {_SUMMARY_TITLE.lower()}
-    titles = {p.name: _safe_sheet_title(p.name, used) for p in job.progress.values()}
 
-    _build_summary(summary_ws, job, titles)
+# --------------------------------------------------------------------------- #
+# Excel — chia bảng thành các sheet/file (batch)
+# --------------------------------------------------------------------------- #
+def _plan_parts(job, limit: int) -> list[list[tuple]]:
+    """Trả về list các file; mỗi file là list placement (p, idx, total, chunk_len).
+
+    Kích thước tính từ counters (không đọc spill):
+    - Mỗi bảng → ≥1 sheet; record-diff > limit bị cắt thành nhiều sheet.
+    - Đóng gói các sheet vào file sao cho tổng dòng/file ≤ limit.
+    """
+    sheets: list[tuple] = []
     for p in job.progress.values():
-        ws = wb.create_sheet(titles[p.name])
-        _build_table_sheet(ws, job, p)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+        n = _table_rowcount(p)
+        total = 1 if n == 0 else (n + limit - 1) // limit
+        for i in range(total):
+            chunk_len = 0 if n == 0 else min(limit, n - i * limit)
+            sheets.append((p, i, total, chunk_len))
+
+    parts: list[list[tuple]] = [[]]
+    cur = 0
+    for sh in sheets:
+        chunk_len = sh[3]
+        if cur > 0 and cur + chunk_len > limit:
+            parts.append([])
+            cur = 0
+        parts[-1].append(sh)
+        cur += chunk_len
+    return parts
+
+
+def build_workbook_zip(job) -> bytes:
+    """Báo cáo Excel gói trong .zip — 1 hoặc nhiều file .xlsx tuỳ khối lượng.
+
+    Mỗi file chứa tối đa MAX_SAMPLES dòng sai lệch; bảng vượt ngưỡng tràn sang
+    file kế (vd 800k diff → file1 500k + file2 300k)."""
+    parts = _plan_parts(job, MAX_SAMPLES)
+
+    # File chứa sheet ĐẦU của mỗi bảng (để Tổng quan ghi link / chú thích).
+    first_part: dict = {}
+    for pi, part in enumerate(parts):
+        for (p, idx, _total, _clen) in part:
+            if idx == 0:
+                first_part.setdefault(p.name, pi)
+
+    job_tag = job.id[:8]
+    files: list[tuple[str, bytes]] = []
+    n_parts = len(parts)
+
+    # Iterator record-diff dùng chung cho các sheet liên tiếp của CÙNG 1 bảng
+    # (kể cả khi bảng tràn qua nhiều file) → đọc spill đúng 1 lần, tuần tự.
+    cur_p = None
+    row_iter = iter(())
+
+    for pi, part in enumerate(parts):
+        wb = Workbook()
+        wb.remove(wb.active)  # bỏ sheet mặc định, tạo tường minh theo thứ tự
+        used: set[str] = set()
+
+        summary_ws = None
+        if pi == 0:
+            summary_ws = wb.create_sheet(_SUMMARY_TITLE)
+            used.add(_SUMMARY_TITLE.lower())
+            cs_ws = wb.create_sheet(_safe_sheet_title(_CONSTRAINT_TITLE, used))
+            _build_constraint_summary(cs_ws, job)
+
+        titles: dict = {}  # table -> sheet title (chỉ sheet đầu, trong file này)
+        for (p, idx, total, clen) in part:
+            base = p.name if total == 1 else f"{p.name} ({idx + 1})"
+            title = _safe_sheet_title(base, used)
+            ws = wb.create_sheet(title)
+            if cur_p is not p:
+                row_iter = _iter_record_rows(job, p) if p.mode != "count-only" else iter(())
+                cur_p = p
+            # Sheet cuối của bảng → lấy hết phần còn lại (chống lệch counter).
+            max_rows = None if idx == total - 1 else clen
+            _build_table_sheet(ws, job, p, row_iter, max_rows, idx, total,
+                               summary_in_file=(pi == 0))
+            if idx == 0 and pi == 0:
+                titles[p.name] = title
+
+        if summary_ws is not None:
+            _build_summary(summary_ws, job, titles, first_part)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        suffix = "" if n_parts == 1 else f"_part{pi + 1}"
+        files.append((f"compare_{job_tag}{suffix}.xlsx", buf.getvalue()))
+
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, data in files:
+            zf.writestr(fname, data)
+    return zbuf.getvalue()
 
 
 # --------------------------------------------------------------------------- #
@@ -331,20 +524,23 @@ def build_csv(job) -> str:
             + (f"; note={p.note}" if p.note else "")
             + (f"; error={p.error}" if p.error else ""),
         ])
-        for key in p.sample_only_a:
-            w.writerow([p.name, p.mode, p.status, "only_in_a", key, "", "", "", ""])
-        for key in p.sample_only_b:
-            w.writerow([p.name, p.mode, p.status, "only_in_b", key, "", "", "", ""])
-        if p.mismatch_details:
-            for rec in p.mismatch_details:
-                for d in rec["diffs"]:
-                    w.writerow([
-                        p.name, p.mode, p.status, "value_mismatch",
-                        rec["id"], d["col"], d["a"], d["b"], "",
-                    ])
-        else:
-            for key in p.sample_mismatch:
-                w.writerow([p.name, p.mode, p.status, "value_mismatch", key, "", "", "", ""])
+        if p.mode != "count-only":  # stream full từ spill
+            pair = job.pair_key()
+            for key in spill.iter_records(pair, p.name, "only_a"):
+                w.writerow([p.name, p.mode, p.status, "only_in_a", key, "", "", "", ""])
+            for key in spill.iter_records(pair, p.name, "only_b"):
+                w.writerow([p.name, p.mode, p.status, "only_in_b", key, "", "", "", ""])
+            for rec in spill.iter_records(pair, p.name, "mismatch_detail"):
+                rid = rec.get("id")
+                diffs = rec.get("diffs") or []
+                if diffs:
+                    for d in diffs:
+                        w.writerow([
+                            p.name, p.mode, p.status, "value_mismatch",
+                            rid, d.get("col"), d.get("a"), d.get("b"), "",
+                        ])
+                else:
+                    w.writerow([p.name, p.mode, p.status, "value_mismatch", rid, "", "", "", ""])
 
         # Schema + constraint diff (lấy từ schema_tables)
         sd = (getattr(job, "schema_tables", {}) or {}).get(p.name)
