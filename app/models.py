@@ -120,9 +120,13 @@ class TableProgress:
     sample_only_a: list[Any] = field(default_factory=list)
     sample_only_b: list[Any] = field(default_factory=list)
     sample_mismatch: list[Any] = field(default_factory=list)
-    # Chi tiết bản ghi cùng id nhưng khác giá trị:
+    # Chi tiết bản ghi cùng id nhưng khác giá trị (PREVIEW ~PREVIEW_SAMPLES bản
+    # cho HTML; full nằm ở spill file mismatch_detail):
     # [{"id": x, "diffs": [{"col": c, "a": "...", "b": "..."}]}]
     mismatch_details: list[dict] = field(default_factory=list)
+    # Tổng số DÒNG chi tiết mismatch đã ghi ra spill (= Σ số cột khác / bản ghi).
+    # Export dùng để tính kích thước chia file mà không cần đọc lại spill.
+    mismatch_row_count: int = 0
     column_scope: list[str] = field(default_factory=list)
     note: str = ""
     error: str = ""

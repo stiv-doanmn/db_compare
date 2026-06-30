@@ -18,8 +18,21 @@ BATCH_SIZE: int = _int("BATCH_SIZE", 1000)
 # Ngưỡng cảnh báo bảng lớn → auto-suggest count-only.
 LARGE_TABLE_THRESHOLD: int = _int("LARGE_TABLE_THRESHOLD", 1_000_000)
 
-# Số lượng id mẫu giữ lại cho mỗi loại khác biệt (missing / mismatch).
-MAX_SAMPLES: int = _int("MAX_SAMPLES", 20)
+# Số bản ghi sai lệch tối đa cho MỖI FILE .xlsx khi export (kích thước chia file).
+# Engine GIỮ TOÀN BỘ bản ghi sai lệch trong RAM (không cắt mẫu) rồi export chia
+# thành nhiều file theo ngưỡng này — vd 800k diff → file1 500k + file2 300k.
+# Phải < 1.048.576 (trần dòng/sheet của Excel).
+MAX_SAMPLES: int = _int("MAX_SAMPLES", 500_000)
+
+# Giới hạn số id mismatch được fetch chi tiết cột. 0 = KHÔNG giới hạn (lấy full,
+# ghi ra spill file để khỏi chết RAM). Đặt >0 nếu muốn cap lại cho nhẹ.
+MAX_MISMATCH_DETAIL: int = _int("MAX_MISMATCH_DETAIL", 0)
+
+# Số id mỗi lần query khi fetch chi tiết mismatch (bó nhỏ → giới hạn RAM/round-trip).
+MISMATCH_DETAIL_BATCH: int = _int("MISMATCH_DETAIL_BATCH", 1_000)
+
+# Số bản ghi giữ trong RAM làm PREVIEW cho HTML/progress (full nằm ở spill file).
+PREVIEW_SAMPLES: int = _int("PREVIEW_SAMPLES", 100)
 
 # asyncpg pool size cho mỗi DB.
 POOL_MIN_SIZE: int = _int("POOL_MIN_SIZE", 1)

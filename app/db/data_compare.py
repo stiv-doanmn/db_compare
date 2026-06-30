@@ -18,7 +18,13 @@ import time
 
 import asyncpg
 
-from ..config import BATCH_SIZE, MAX_SAMPLES
+from .. import spill
+from ..config import (
+    BATCH_SIZE,
+    MAX_MISMATCH_DETAIL,
+    MISMATCH_DETAIL_BATCH,
+    PREVIEW_SAMPLES,
+)
 from ..models import JobState, TableProgress
 from ..store import clear_checkpoint, load_checkpoint, save_checkpoint
 
@@ -120,8 +126,13 @@ async def _iter_rows(
                 break
 
 
-def _ckpt_payload(prog: TableProgress) -> dict:
-    """Snapshot tiến độ 1 bảng để ghi xuống file store (phục vụ resume)."""
+def _ckpt_payload(prog: TableProgress, spill_off: dict | None = None) -> dict:
+    """Snapshot tiến độ 1 bảng để ghi xuống file store (phục vụ resume).
+
+    spill_off: offset byte của các spill file tại đúng thời điểm snapshot, để khi
+    resume cắt spill về vị trí khớp resume_after_id (tránh ghi trùng).
+    Các sample_* chỉ là PREVIEW (≤ PREVIEW_SAMPLES) — dữ liệu full nằm ở spill.
+    """
     return {
         "mode": prog.mode,
         "status": prog.status,
@@ -135,6 +146,7 @@ def _ckpt_payload(prog: TableProgress) -> dict:
         "sample_only_a": list(prog.sample_only_a),
         "sample_only_b": list(prog.sample_only_b),
         "sample_mismatch": list(prog.sample_mismatch),
+        "spill_off": spill_off,
         "error": prog.error,
     }
 
@@ -166,8 +178,8 @@ async def _compare_one(job: JobState, table: str) -> None:
         prog.count_b = await _count(job.pool_b, table)
 
         if prog.mode == "count-only":
-            # count-only: chỉ đối chiếu số lượng, KHÔNG flag warning (Δ vẫn hiện ở report).
-            prog.status = "done"
+            # count-only: chỉ đối chiếu số lượng. Lệch count → "Khác biệt".
+            prog.status = "warning" if prog.count_delta != 0 else "done"
             clear_checkpoint(pair_key, table)
             return
 
@@ -206,7 +218,8 @@ async def _compare_one(job: JobState, table: str) -> None:
                 parts.append(f"chỉ có ở {job.label_b}: {_fmt_cols(only_b_cols)}")
             notes.append("Schema lệch, bỏ qua khi so giá trị — " + " · ".join(parts))
 
-        # Resume checkpoint — chỉ áp dụng cho bảng có id (sort id tăng dần).
+        # Resume checkpoint — chỉ áp dụng cho bảng có id (sort id tăng dần) VÀ
+        # checkpoint có spill_off (để cắt spill khớp, tránh ghi trùng).
         start_after: tuple | None = None
         if key_cols == ["id"]:
             cp = load_checkpoint(pair_key, table)
@@ -215,8 +228,11 @@ async def _compare_one(job: JobState, table: str) -> None:
                 and cp.get("mode") == prog.mode
                 and cp.get("resume_after_id") is not None
                 and cp.get("status") in ("error", "running")
+                and cp.get("spill_off")
             ):
                 start_after = _restore_from_checkpoint(prog, cp)
+                for kind, sz in cp["spill_off"].items():  # cắt spill về điểm checkpoint
+                    spill.truncate(pair_key, table, kind, sz)
                 notes.append(f"Resume từ id > {start_after[0]}")
 
         prog.note = " · ".join(notes)
@@ -227,9 +243,10 @@ async def _compare_one(job: JobState, table: str) -> None:
             types_a, types_b,
         )
 
-        # Bảng có id + có cột value: fetch giá trị thật để biết cột nào khác.
-        if key_cols == ["id"] and prog.sample_mismatch and hash_cols:
-            await _fetch_mismatch_details(job, prog, table, hash_cols)
+        # Bảng có id + có cột value + có mismatch: fetch giá trị thật để biết cột
+        # nào khác — stream toàn bộ từ spill, ghi chi tiết ra spill (không cap RAM).
+        if key_cols == ["id"] and hash_cols and prog.value_mismatch:
+            await _fetch_mismatch_details(job, prog, table, hash_cols, pair_key)
 
         # Chỉ warning khi THẬT SỰ có khác biệt: dòng chỉ-ở-1-bên, giá trị khác,
         # hoặc thay đổi cột (thêm/bỏ/đổi kiểu). Việc có id hay không, hay lệch
@@ -244,8 +261,8 @@ async def _compare_one(job: JobState, table: str) -> None:
     except Exception as exc:  # noqa: BLE001
         prog.status = "error"
         prog.error = f"{type(exc).__name__}: {exc}"
-        # Giữ lại checkpoint với status=error để lần sau resume từ id dở dang.
-        save_checkpoint(pair_key, table, _ckpt_payload(prog))
+        # KHÔNG ghi đè checkpoint ở đây: checkpoint 'running' định kỳ (kèm
+        # spill_off) vẫn nằm trên đĩa và đã khớp spill → lần sau resume an toàn.
     finally:
         prog.finished_at = time.time()
         await _notify(job)
@@ -271,65 +288,89 @@ async def _merge_join(
     # Chỉ checkpoint được khi key là id đơn (số) — resume bằng id > X.
     checkpointable = key_cols == ["id"] and pair_key is not None
 
+    # Chạy mới (không resume) → xoá spill cũ của bảng này.
+    if pair_key is not None and start_after is None:
+        spill.reset(pair_key, table)
+
     def _mark(consumed_key: tuple) -> None:
         """Ghi nhận id nhỏ nhất vừa xử lý xong cả 2 bên làm điểm resume."""
         if checkpointable:
             prog.resume_after_id = consumed_key[0]
 
-    # Mỗi bên chuẩn hoá theo data_type CỦA CHÍNH NÓ (type có thể lệch giữa 2 DB).
-    ia = _iter_rows(job.pool_a, table, key_cols, hash_cols, start_after, types_a)
-    ib = _iter_rows(job.pool_b, table, key_cols, hash_cols, start_after, types_b)
-    a = await anext(ia, None)
-    b = await anext(ib, None)
+    # Spill append handle — ghi TOÀN BỘ findings ra đĩa, RAM chỉ giữ preview.
+    fa = spill.open_append(pair_key, table, "only_a") if pair_key else None
+    fb = spill.open_append(pair_key, table, "only_b") if pair_key else None
+    fm = spill.open_append(pair_key, table, "mismatch") if pair_key else None
 
-    since_tick = 0
-    tick_count = 0
-    while a is not None and b is not None:
-        ka, ha = a
-        kb, hb = b
-        if ka < kb:
-            prog.only_in_a += 1
-            if len(prog.sample_only_a) < MAX_SAMPLES:
-                prog.sample_only_a.append(_keyval(ka))
-            _mark(ka)
-            a = await anext(ia, None)
-        elif ka > kb:
-            prog.only_in_b += 1
-            if len(prog.sample_only_b) < MAX_SAMPLES:
-                prog.sample_only_b.append(_keyval(kb))
-            _mark(kb)
-            b = await anext(ib, None)
-        else:
-            if ha != hb:
-                prog.value_mismatch += 1
-                if len(prog.sample_mismatch) < MAX_SAMPLES:
-                    prog.sample_mismatch.append(_keyval(ka))
-            _mark(ka)
-            a = await anext(ia, None)
-            b = await anext(ib, None)
-        prog.scanned += 1
-        since_tick += 1
-        if since_tick >= _PROGRESS_TICK:
-            since_tick = 0
-            tick_count += 1
-            if checkpointable and tick_count % _CHECKPOINT_EVERY == 0:
-                save_checkpoint(pair_key, table, _ckpt_payload(prog))
-            await _notify(job)
+    def _emit(fh, lst, key) -> None:
+        kv = _keyval(key)
+        if fh is not None:
+            spill.write(fh, kv)
+        if len(lst) < PREVIEW_SAMPLES:
+            lst.append(kv)
 
-    while a is not None:
-        prog.only_in_a += 1
-        if len(prog.sample_only_a) < MAX_SAMPLES:
-            prog.sample_only_a.append(_keyval(a[0]))
-        _mark(a[0])
-        prog.scanned += 1
+    def _save_ckpt() -> None:
+        # Flush spill rồi chốt offset → checkpoint khớp spill khi resume.
+        off = None
+        if fa is not None and fb is not None and fm is not None:
+            fa.flush(); fb.flush(); fm.flush()
+            off = {"only_a": fa.tell(), "only_b": fb.tell(), "mismatch": fm.tell()}
+        save_checkpoint(pair_key, table, _ckpt_payload(prog, off))
+
+    try:
+        # Mỗi bên chuẩn hoá theo data_type CỦA CHÍNH NÓ (type có thể lệch giữa 2 DB).
+        ia = _iter_rows(job.pool_a, table, key_cols, hash_cols, start_after, types_a)
+        ib = _iter_rows(job.pool_b, table, key_cols, hash_cols, start_after, types_b)
         a = await anext(ia, None)
-    while b is not None:
-        prog.only_in_b += 1
-        if len(prog.sample_only_b) < MAX_SAMPLES:
-            prog.sample_only_b.append(_keyval(b[0]))
-        _mark(b[0])
-        prog.scanned += 1
         b = await anext(ib, None)
+
+        since_tick = 0
+        tick_count = 0
+        while a is not None and b is not None:
+            ka, ha = a
+            kb, hb = b
+            if ka < kb:
+                prog.only_in_a += 1
+                _emit(fa, prog.sample_only_a, ka)
+                _mark(ka)
+                a = await anext(ia, None)
+            elif ka > kb:
+                prog.only_in_b += 1
+                _emit(fb, prog.sample_only_b, kb)
+                _mark(kb)
+                b = await anext(ib, None)
+            else:
+                if ha != hb:
+                    prog.value_mismatch += 1
+                    _emit(fm, prog.sample_mismatch, ka)
+                _mark(ka)
+                a = await anext(ia, None)
+                b = await anext(ib, None)
+            prog.scanned += 1
+            since_tick += 1
+            if since_tick >= _PROGRESS_TICK:
+                since_tick = 0
+                tick_count += 1
+                if checkpointable and tick_count % _CHECKPOINT_EVERY == 0:
+                    _save_ckpt()
+                await _notify(job)
+
+        while a is not None:
+            prog.only_in_a += 1
+            _emit(fa, prog.sample_only_a, a[0])
+            _mark(a[0])
+            prog.scanned += 1
+            a = await anext(ia, None)
+        while b is not None:
+            prog.only_in_b += 1
+            _emit(fb, prog.sample_only_b, b[0])
+            _mark(b[0])
+            prog.scanned += 1
+            b = await anext(ib, None)
+    finally:
+        for f in (fa, fb, fm):
+            if f is not None:
+                f.close()
 
 
 def _fmt_val(v) -> str:
@@ -340,31 +381,59 @@ def _fmt_val(v) -> str:
 
 
 async def _fetch_mismatch_details(
-    job: JobState, prog: TableProgress, table: str, hash_cols: list[str]
+    job: JobState, prog: TableProgress, table: str, hash_cols: list[str], pair_key: str
 ) -> None:
-    """Fetch giá trị thật của các id mismatch (mẫu) ở 2 DB, so cột để biết cột nào khác."""
-    ids = list(prog.sample_mismatch)
+    """Stream TOÀN BỘ id mismatch từ spill, fetch giá trị 2 DB theo bó, ghi chi
+    tiết cột khác ra spill 'mismatch_detail'. RAM chỉ giữ 1 bó + preview.
+
+    MAX_MISMATCH_DETAIL > 0 → cap số id lấy chi tiết; = 0 → lấy full.
+    Đặt prog.mismatch_row_count = tổng số DÒNG chi tiết (Σ cột khác / bản ghi) để
+    export tính kích thước chia file.
+    """
+    spill.reset(pair_key, table, "mismatch_detail")
     col_list = ", ".join(_qident(c) for c in (["id"] + hash_cols))
     sql = f"SELECT {col_list} FROM {_qident(table)} WHERE id = ANY($1::bigint[])"
+    cap = MAX_MISMATCH_DETAIL
+    preview: list[dict] = []
+    batch: list = []
+    counters = {"rows": 0, "ids": 0}
 
-    rows_a = await job.pool_a.fetch(sql, ids)
-    rows_b = await job.pool_b.fetch(sql, ids)
-    map_a = {r["id"]: r for r in rows_a}
-    map_b = {r["id"]: r for r in rows_b}
+    fd = spill.open_append(pair_key, table, "mismatch_detail")
 
-    details: list[dict] = []
-    for rid in ids:
-        ra, rb = map_a.get(rid), map_b.get(rid)
-        if ra is None or rb is None:
-            continue
-        diffs = []
-        for c in hash_cols:
-            va, vb = ra[c], rb[c]
-            if va != vb:
-                diffs.append({"col": c, "a": _fmt_val(va), "b": _fmt_val(vb)})
-        if diffs:
-            details.append({"id": rid, "diffs": diffs})
-    prog.mismatch_details = details
+    async def _flush() -> None:
+        if not batch:
+            return
+        rows_a = await job.pool_a.fetch(sql, batch)
+        rows_b = await job.pool_b.fetch(sql, batch)
+        map_a = {r["id"]: r for r in rows_a}
+        map_b = {r["id"]: r for r in rows_b}
+        for rid in batch:
+            ra, rb = map_a.get(rid), map_b.get(rid)
+            diffs = []
+            if ra is not None and rb is not None:
+                for c in hash_cols:
+                    if ra[c] != rb[c]:
+                        diffs.append({"col": c, "a": _fmt_val(ra[c]), "b": _fmt_val(rb[c])})
+            spill.write(fd, {"id": rid, "diffs": diffs})
+            counters["rows"] += len(diffs) or 1  # ít nhất 1 dòng (id) kể cả khi rỗng
+            if diffs and len(preview) < PREVIEW_SAMPLES:
+                preview.append({"id": rid, "diffs": diffs})
+        batch.clear()
+
+    try:
+        for rid in spill.iter_records(pair_key, table, "mismatch"):
+            batch.append(rid)
+            counters["ids"] += 1
+            if len(batch) >= MISMATCH_DETAIL_BATCH:
+                await _flush()
+            if cap and counters["ids"] >= cap:
+                break
+        await _flush()
+    finally:
+        fd.close()
+
+    prog.mismatch_details = preview
+    prog.mismatch_row_count = counters["rows"]
 
 
 async def _notify(job: JobState) -> None:
@@ -382,6 +451,9 @@ async def run_compare(job: JobState) -> None:
     job.status = "running"
     job.compare_started_at = time.time()
     job.compare_finished_at = None
+    # Dọn spill rác của các bảng không còn được chọn (giữ bảng đang chọn → an
+    # toàn cho resume). Spill của bảng đang chọn được _merge_join tự reset.
+    spill.cleanup_pair(job.pair_key(), set(job.progress.keys()))
     sem = asyncio.Semaphore(MAX_WORKERS)
 
     async def _guarded(table: str) -> None:
