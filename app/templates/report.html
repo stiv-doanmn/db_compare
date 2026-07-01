@@ -35,12 +35,17 @@
     <div class="flex flex-wrap items-center gap-2">
       <span class="label-xs">Tìm kiếm từ khóa / mẫu</span>
       <span class="text-xs text-muted">dò trong cột text của <span class="mono text-ink">{{ job.label_b }}</span> · keyword ILIKE · mẫu regex</span>
-      <span class="ml-auto text-xs mono text-muted">{{ job.keyword_hits | selectattr('error', 'equalto', '') | list | length }} hit</span>
+      <label class="ml-auto flex items-center gap-1.5 text-xs text-body">Thay bằng (replace):
+        <input id="kw-repl" value="{{ KEYWORD_REPLACE_DEFAULT }}" autocomplete="off" spellcheck="false"
+               class="input mono" style="height:30px; width:130px;" />
+      </label>
     </div>
-    <div class="mt-2 flex flex-wrap gap-1.5">
+    <div class="mt-2 flex flex-wrap items-center gap-1.5">
       {% for kw in job.keywords %}<span class="tag tag-ink mono">{{ kw }}</span>{% endfor %}
       {% for pk in job.search_patterns %}<span class="tag tag-warn mono">{{ pk }}</span>{% endfor %}
+      <span class="ml-auto text-xs mono text-muted">{{ job.keyword_hits | selectattr('error', 'equalto', '') | list | length }} hit</span>
     </div>
+    <p class="mt-2 text-[11px] text-muted">Query <span class="mono">SELECT</span> để xem, <span class="mono text-coral">UPDATE</span> để thay cụm match → giá trị ở ô "Thay bằng". Câu query đã bỏ LIMIT — copy chạy là áp lên toàn bộ dòng match. Nên chạy thử <span class="mono">SELECT</span> trước khi <span class="mono text-coral">UPDATE</span>.</p>
   </div>
   {% if job.keyword_hits %}
   <div class="table-scroll">
@@ -48,27 +53,44 @@
       <thead>
         <tr>
           <th class="th">Loại</th><th class="th">Từ khóa / Mẫu</th><th class="th">Bảng</th>
-          <th class="th text-right">Số dòng khớp</th><th class="th">Cột đã tìm</th>
-          <th class="th">id mẫu</th><th class="th">Query</th>
+          <th class="th text-right">Dòng khớp</th>
+          <th class="th">Query xem (SELECT)</th>
+          <th class="th">Cột match &amp; Query replace (UPDATE)</th>
         </tr>
       </thead>
       <tbody>
         {% for h in job.keyword_hits %}
-        <tr class="rowx">
+        <tr class="rowx align-top">
           <td class="td"><span class="tag {{ 'tag-warn' if h.kind == 'pattern' else 'tag-muted' }}">{{ 'mẫu' if h.kind == 'pattern' else 'từ khóa' }}</span></td>
           <td class="td mono font-medium {{ 'text-coral' if h.error else 'text-ink' }}">{{ h.keyword }}</td>
           <td class="td mono text-body">{{ h.table }}</td>
           {% if h.error %}
-          <td class="td text-coral" colspan="4">Lỗi: {{ h.error }}</td>
+          <td class="td text-coral" colspan="3">Lỗi: {{ h.error }}</td>
           {% else %}
           <td class="td text-right mono tabular-nums text-mustard">{{ "{:,}".format(h.match_count) }}</td>
-          <td class="td mono text-muted break-all" style="max-width:240px">{{ h.columns | join(', ') }}</td>
-          <td class="td mono text-body break-all" style="max-width:200px">{{ h.sample_ids | join(', ') }}{% if h.has_id and h.match_count > h.sample_ids|length %} …{% elif not h.has_id %}<span class="text-muted">(không có id)</span>{% endif %}</td>
           <td class="td">
             <div class="flex items-start gap-1.5">
-              <button type="button" class="kw-copy shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 text-[11px] text-body hover:bg-surface-soft" data-query="{{ h.query|e }}" title="Copy query">Copy</button>
-              <code class="mono text-info break-all" style="max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ h.query }}</code>
+              <button type="button" class="kw-copy shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 text-[11px] text-body hover:bg-surface-soft" data-query="{{ h.query|e }}" title="Copy SELECT">Copy</button>
+              <code class="mono text-info" style="max-width:300px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ h.query }}">{{ h.query }}</code>
             </div>
+          </td>
+          <td class="td">
+            {% for m in h.matched %}
+            <div class="mb-2 last:mb-0">
+              <div class="flex items-center gap-1.5">
+                <span class="mono text-xs font-medium text-ink">{{ m.col }}</span>
+                <span class="text-[10px] text-muted">{{ m.type }} · {{ "{:,}".format(m.count) }} dòng</span>
+              </div>
+              {% if m.replace %}
+              <div class="mt-0.5 flex items-start gap-1.5">
+                <button type="button" class="kw-copy shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 text-[11px] text-coral hover:bg-surface-soft" data-tpl="{{ m.replace|e }}" title="Copy UPDATE">Copy</button>
+                <code class="kw-repl-q mono text-coral" data-tpl="{{ m.replace|e }}" style="max-width:340px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ m.replace | replace(KEYWORD_REPLACE_TOKEN, KEYWORD_REPLACE_DEFAULT) }}</code>
+              </div>
+              {% else %}
+              <div class="mt-0.5 text-[10px] text-mustard">{{ m.type }} — không auto-replace, sửa tay</div>
+              {% endif %}
+            </div>
+            {% endfor %}
           </td>
           {% endif %}
         </tr>
@@ -320,8 +342,13 @@
     });
   })();
 
-  // ----- copy query -----
+  // ----- copy query + replace template (thay @REPL@ theo ô "Thay bằng") -----
   (function () {
+    const REPL_TOKEN = {{ KEYWORD_REPLACE_TOKEN | tojson }};
+    const replInput = document.getElementById('kw-repl');
+    const sqlEsc = v => (v || '').replace(/'/g, "''");
+    const render = tpl => tpl.split(REPL_TOKEN).join(sqlEsc(replInput ? replInput.value : ''));
+
     async function copy(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -340,11 +367,20 @@
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('.kw-copy');
       if (!btn) return;
-      const ok = await copy(btn.dataset.query || '');
+      const text = btn.dataset.tpl != null ? render(btn.dataset.tpl) : (btn.dataset.query || '');
+      const ok = await copy(text);
       const old = btn.textContent;
       btn.textContent = ok ? 'Đã copy ✓' : 'Lỗi';
       setTimeout(() => { btn.textContent = old; }, 1200);
     });
+    // Cập nhật live các câu UPDATE hiển thị khi đổi ô "Thay bằng".
+    if (replInput) {
+      replInput.addEventListener('input', () => {
+        document.querySelectorAll('.kw-repl-q').forEach(el => {
+          el.textContent = render(el.dataset.tpl || '');
+        });
+      });
+    }
   })();
 </script>
 {% endblock %}

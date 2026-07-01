@@ -269,8 +269,8 @@ def _build_constraint_summary(ws: Worksheet, job) -> None:
 # Excel — sheet kết quả tìm cụm từ khóa (dò ở DB B)
 # --------------------------------------------------------------------------- #
 _KEYWORD_HEAD = [
-    "No.", "Loại", "Từ khóa / Mẫu", "Bảng", "Database", "Số dòng khớp",
-    "Cột đã tìm", "id mẫu", "Câu query",
+    "No.", "Loại", "Từ khóa / Mẫu", "Bảng", "Database", "Dòng khớp",
+    "Cột match", "Kiểu cột", "Query xem (SELECT)", "Query replace (UPDATE)",
 ]
 _KIND_LABEL = {"keyword": "từ khóa", "pattern": "mẫu"}
 
@@ -283,16 +283,22 @@ def _fmt_cols_list(cols: list[str], limit: int = 12) -> str:
     return ", ".join(cols[:limit]) + f" … (+{len(cols) - limit} cột)"
 
 
+def _render_replace(tpl: str) -> str:
+    """Thay token @REPL@ bằng giá trị mặc định để Excel/CSV có câu chạy được."""
+    from .config import KEYWORD_REPLACE_DEFAULT, KEYWORD_REPLACE_TOKEN
+    return (tpl or "").replace(KEYWORD_REPLACE_TOKEN, KEYWORD_REPLACE_DEFAULT)
+
+
 def _build_keyword_search(ws: Worksheet, job) -> None:
     ws.sheet_view.showGridLines = False
-    ws["A1"] = "KẾT QUẢ TÌM CỤM TỪ KHÓA"
+    from .config import KEYWORD_REPLACE_DEFAULT, SEARCH_PATTERN_MAP
+    ws["A1"] = "KẾT QUẢ TÌM CỤM TỪ KHÓA / MẪU"
     ws["A1"].font = _FONT_TITLE
     ws["A2"] = (
-        f"Dò trong cột kiểu text của {job.label_b} · không phân biệt hoa/thường "
-        f"(keyword: ILIKE · mẫu: regex ~*)"
+        f"Dò trong cột text của {job.label_b} · keyword ILIKE · mẫu regex ~* · "
+        f"Query UPDATE thay cụm match → '{KEYWORD_REPLACE_DEFAULT}' (đổi ở cột cuối)"
     )
     ws["A2"].font = _FONT_MUTED
-    from .config import SEARCH_PATTERN_MAP
     pat_labels = [SEARCH_PATTERN_MAP[k]["label"] for k in getattr(job, "search_patterns", []) if k in SEARCH_PATTERN_MAP]
     parts = []
     if job.keywords:
@@ -306,50 +312,62 @@ def _build_keyword_search(ws: Worksheet, job) -> None:
     _header_row(ws, hr, _KEYWORD_HEAD)
 
     r = hr + 1
-    no = 1
+    no = 0
+
+    def _meta(row: int, h, kind: str, first: bool) -> None:
+        ws.cell(row=row, column=1, value=no if first else None)
+        ws.cell(row=row, column=2, value=kind)
+        kc = ws.cell(row=row, column=3, value=h.keyword)
+        if first:
+            kc.font = _FONT_BOLD
+        ws.cell(row=row, column=4, value=h.table)
+        ws.cell(row=row, column=5, value=h.db_label)
+
     for h in job.keyword_hits:
+        no += 1
         kind = _KIND_LABEL.get(h.kind, h.kind)
         if h.error:
-            ws.cell(row=r, column=1, value=no)
-            ws.cell(row=r, column=2, value=kind)
-            ws.cell(row=r, column=3, value=h.keyword)
-            ws.cell(row=r, column=4, value=h.table)
-            ws.cell(row=r, column=5, value=h.db_label)
-            ecell = ws.cell(row=r, column=6, value="lỗi")
-            ecell.font = _FONT_ERR
+            _meta(r, h, kind, True)
+            ec = ws.cell(row=r, column=6, value="lỗi")
+            ec.font = _FONT_ERR
             ws.cell(row=r, column=9, value=(h.query or "") + f"  — {h.error}")
-        else:
-            ws.cell(row=r, column=1, value=no)
-            ws.cell(row=r, column=2, value=kind)
-            ws.cell(row=r, column=3, value=h.keyword).font = _FONT_BOLD
-            ws.cell(row=r, column=4, value=h.table)
-            ws.cell(row=r, column=5, value=h.db_label)
-            mc = ws.cell(row=r, column=6, value=h.match_count)
-            mc.alignment = _RIGHT
-            mc.font = _FONT_WARN
-            ws.cell(row=r, column=7, value=_fmt_cols_list(h.columns)).alignment = _LEFT
-            ids = ", ".join(str(i) for i in h.sample_ids)
-            if h.has_id and h.match_count > len(h.sample_ids):
-                ids += " …"
-            ws.cell(row=r, column=8, value=ids or ("(bảng không có id)" if not h.has_id else "")).alignment = _LEFT
-            ws.cell(row=r, column=9, value=h.query).alignment = _LEFT
-        for col in range(1, 10):
-            ws.cell(row=r, column=col).border = _BORDER
-        r += 1
-        no += 1
+            for col in range(1, 11):
+                ws.cell(row=r, column=col).border = _BORDER
+            r += 1
+            continue
 
-    if no == 1:
+        rows_for_hit = h.matched or [None]  # ít nhất 1 dòng kể cả khi không rõ cột
+        for j, m in enumerate(rows_for_hit):
+            first = j == 0
+            _meta(r, h, kind, first)
+            if first:
+                mc = ws.cell(row=r, column=6, value=h.match_count)
+                mc.alignment = _RIGHT
+                mc.font = _FONT_WARN
+                ws.cell(row=r, column=9, value=h.query).alignment = _LEFT
+            if m:
+                ws.cell(row=r, column=7, value=m.get("col")).alignment = _LEFT
+                ws.cell(row=r, column=8, value=m.get("type")).alignment = _LEFT
+                if m.get("replace"):
+                    ws.cell(row=r, column=10, value=_render_replace(m["replace"])).alignment = _LEFT
+                else:
+                    ws.cell(row=r, column=10, value=f"({m.get('type')} — sửa tay)").font = _FONT_MUTED
+            for col in range(1, 11):
+                ws.cell(row=r, column=col).border = _BORDER
+            r += 1
+
+    if no == 0:
         has_terms = job.keywords or getattr(job, "search_patterns", None)
         msg = ("Không tìm thấy dữ liệu khớp từ khóa/mẫu nào."
                if has_terms else "Chưa nhập từ khóa/bật mẫu ở bước Config.")
         ws.cell(row=r, column=1, value=msg).font = _FONT_OK
 
-    widths = [6, 12, 26, 30, 12, 13, 42, 36, 90]
+    widths = [6, 12, 24, 26, 12, 11, 24, 16, 66, 84]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=hr + 1, column=1)
-    if no > 1:
-        ws.auto_filter.ref = f"A{hr}:I{r - 1}"
+    if r - 1 >= hr + 1:
+        ws.auto_filter.ref = f"A{hr}:J{r - 1}"
 
 
 # --------------------------------------------------------------------------- #
@@ -616,18 +634,25 @@ def build_csv(job) -> str:
         "id_or_key", "column", f"value_{job.label_a}", f"value_{job.label_b}",
         "detail",
     ])
-    # Kết quả tìm từ khóa (dò ở DB B) — ghi lên đầu file cho dễ thấy.
+    # Kết quả tìm từ khóa/mẫu (dò ở DB B) — ghi lên đầu file cho dễ thấy.
     for h in getattr(job, "keyword_hits", []) or []:
-        detail = h.query
+        kind = _KIND_LABEL.get(h.kind, h.kind)
         if h.error:
-            detail = (detail + " | " if detail else "") + f"error={h.error}"
-        w.writerow([
-            h.table, "", "keyword_search",
-            f"{_KIND_LABEL.get(h.kind, h.kind)}: {h.keyword}",
-            ", ".join(str(i) for i in h.sample_ids),
-            _fmt_cols_list(h.columns),
-            "", h.match_count, detail,
-        ])
+            w.writerow([
+                h.table, "", "keyword_search", f"{kind}: {h.keyword}",
+                "", "", "", "", f"error={h.error}",
+            ])
+            continue
+        for m in (h.matched or [None]):
+            col = m.get("col") if m else ""
+            replace = _render_replace(m.get("replace")) if m and m.get("replace") else (
+                f"({m.get('type')} — sửa tay)" if m else "")
+            w.writerow([
+                h.table, "", "keyword_search", f"{kind}: {h.keyword}",
+                "", col, h.query, replace,
+                f"match_count={h.match_count}"
+                + (f"; col_count={m.get('count')}; type={m.get('type')}" if m else ""),
+            ])
     for p in job.progress.values():
         w.writerow([
             p.name, p.mode, p.status, "summary", "", "", p.count_a, p.count_b,

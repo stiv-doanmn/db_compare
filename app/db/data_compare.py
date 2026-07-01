@@ -14,6 +14,7 @@ giống nhau ở pool (xem db/pool.py), numeric bỏ trailing-zero, json → jso
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 import asyncpg
@@ -452,6 +453,42 @@ def _sql_literal(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
+# Cột có thể tự sinh câu UPDATE replace (kiểu text thuần — cast text→cột an toàn).
+# json/jsonb KHÔNG auto-replace (sửa trong chuỗi serialize dễ hỏng cấu trúc).
+_REPLACEABLE_TYPES = {
+    "character varying", "varchar", "text", "character", "char", "citext", "name",
+}
+# Ký tự metachar của regex Postgres ARE — escape để keyword literal khớp đúng.
+_RE_META = re.compile(r"([.\\+*?\[\]{}()|^$])")
+
+
+def _regex_escape(s: str) -> str:
+    return _RE_META.sub(r"\\\1", s)
+
+
+def _replace_query(qtable: str, col: str, op: str, kw: str, pattern: str) -> str:
+    """Câu UPDATE thay cụm match → token @REPL@ (report/export thay giá trị thật).
+
+    - keyword (ILIKE): tìm literal (đã regex-escape) case-insensitive → regexp_replace 'gi'.
+    - mẫu (~*): tìm theo chính regex đó.
+    WHERE dùng cùng toán tử để chỉ đụng đúng dòng match ở cột này.
+    """
+    from ..config import KEYWORD_REPLACE_TOKEN
+
+    q = _qident(col)
+    if op == "ILIKE":
+        find = _regex_escape(kw).replace("'", "''")
+        where = f"{q}::text ILIKE {_sql_literal(pattern)}"
+    else:  # ~*
+        find = pattern.replace("'", "''")
+        where = f"{q}::text ~* {_sql_literal(pattern)}"
+    repl = KEYWORD_REPLACE_TOKEN.replace("'", "''")
+    return (
+        f"UPDATE {qtable} SET {q} = regexp_replace({q}::text, '{find}', '{repl}', 'gi') "
+        f"WHERE {where};"
+    )
+
+
 def _search_terms(job: JobState) -> list[tuple[str, str, str, str]]:
     """Danh sách (label, kind, operator, pattern) cần dò:
     - keyword tự nhập → ILIKE '%kw%'
@@ -500,29 +537,50 @@ async def _search_keywords(job: JobState, table: str) -> None:
         predicate = " OR ".join(f"{_qident(c)}::text {op} $1" for c in text_cols)
         lit = _sql_literal(pattern)
         try:
-            count = await pool.fetchval(
-                f"SELECT count(*) FROM {qtable} WHERE {predicate}", pattern
+            # 1 lượt quét: tổng dòng match + đếm match theo TỪNG cột (FILTER) →
+            # biết đúng cột nào chứa dữ liệu match.
+            per_col = ", ".join(
+                f"count(*) FILTER (WHERE {_qident(c)}::text {op} $1) AS c{i}"
+                for i, c in enumerate(text_cols)
             )
-            if not count:
+            row = await pool.fetchrow(
+                f"SELECT count(*) AS total, {per_col} FROM {qtable} WHERE {predicate}",
+                pattern,
+            )
+            total = row["total"]
+            if not total:
                 continue
+
+            # Cột thực sự match + câu UPDATE replace cho từng cột (json/jsonb bỏ trống).
+            matched: list[dict] = []
+            for i, c in enumerate(text_cols):
+                cnt = row[f"c{i}"]
+                if not cnt:
+                    continue
+                ctype = types.get(c, "")
+                # keyword: kw literal = label; mẫu: dùng chính regex (pattern).
+                rq = (
+                    _replace_query(qtable, c, op, label, pattern)
+                    if ctype in _REPLACEABLE_TYPES else ""
+                )
+                matched.append({"col": c, "count": int(cnt), "type": ctype, "replace": rq})
+
+            matched_cols = [m["col"] for m in matched]
+            pred_m = " OR ".join(f"{_qident(c)}::text {op} {lit}" for c in matched_cols)
+            # Câu SELECT xem đủ bản ghi match (id + đúng các cột match), KHÔNG LIMIT.
+            sel_cols = ", ".join(_qident(c) for c in ((["id"] if has_id else []) + matched_cols))
+            display_query = f"SELECT {sel_cols} FROM {qtable} WHERE {pred_m}"
             sample_ids: list = []
             if has_id:
-                # Câu query hiển thị/copy: KHÔNG LIMIT (lấy đủ). Peek id thì có
-                # LIMIT riêng để cell không phình.
-                display_query = (
-                    f"SELECT id FROM {qtable} WHERE {predicate} ORDER BY id"
-                ).replace("$1", lit)
+                display_query += " ORDER BY id"
                 rows = await pool.fetch(
-                    f"SELECT id FROM {qtable} WHERE {predicate} "
-                    f"ORDER BY id LIMIT {KEYWORD_SAMPLE_IDS}",
-                    pattern,
+                    f"SELECT id FROM {qtable} WHERE {pred_m} ORDER BY id LIMIT {KEYWORD_SAMPLE_IDS}"
                 )
                 sample_ids = [r["id"] for r in rows]
-            else:
-                display_query = f"SELECT * FROM {qtable} WHERE {predicate}".replace("$1", lit)
+
             job.keyword_hits.append(KeywordHit(
                 keyword=label, kind=kind, table=table, db_label=job.label_b,
-                match_count=int(count), columns=list(text_cols),
+                match_count=int(total), columns=list(text_cols), matched=matched,
                 sample_ids=sample_ids, has_id=has_id, query=display_query,
             ))
         except Exception as exc:  # noqa: BLE001

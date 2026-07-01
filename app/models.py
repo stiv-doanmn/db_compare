@@ -105,10 +105,13 @@ class KeywordHit:
     db_label: str
     kind: str = "keyword"  # keyword (tự nhập) | pattern (email/link/domain…)
     match_count: int = 0
-    columns: list[str] = field(default_factory=list)  # các cột text đã tìm
+    columns: list[str] = field(default_factory=list)  # các cột text đã DÒ
+    # Các cột THỰC SỰ chứa dữ liệu match, kèm câu UPDATE replace:
+    # [{"col": str, "count": int, "type": str, "replace": "UPDATE ... @REPL@ ..."}]
+    matched: list[dict] = field(default_factory=list)
     sample_ids: list[Any] = field(default_factory=list)
     has_id: bool = False
-    query: str = ""
+    query: str = ""  # câu SELECT xem toàn bộ bản ghi match (không LIMIT)
     error: str = ""
 
 

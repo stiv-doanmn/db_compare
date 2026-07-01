@@ -38,6 +38,11 @@ PREVIEW_SAMPLES: int = _int("PREVIEW_SAMPLES", 100)
 # xuất ra KHÔNG bị LIMIT — copy chạy lại lấy đủ toàn bộ dòng khớp.
 KEYWORD_SAMPLE_IDS: int = _int("KEYWORD_SAMPLE_IDS", 50)
 
+# Token placeholder cho cụm thay thế trong câu UPDATE replace. Report thay bằng
+# giá trị user nhập (live); export tĩnh (Excel/CSV) thay bằng KEYWORD_REPLACE_DEFAULT.
+KEYWORD_REPLACE_TOKEN: str = "@REPL@"
+KEYWORD_REPLACE_DEFAULT: str = os.getenv("KEYWORD_REPLACE_DEFAULT", "XXZ")
+
 # Bộ dò theo mẫu (regex Postgres ARE, so bằng ~* — không phân biệt hoa/thường).
 # Người dùng bật/tắt ở bước Config, chạy song song với keyword tự nhập.
 SEARCH_PATTERNS: list[dict] = [

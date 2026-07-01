@@ -16,6 +16,8 @@ from .config import (
     DEFAULT_LABEL_A,
     DEFAULT_LABEL_B,
     DEFAULT_PREFIXES,
+    KEYWORD_REPLACE_DEFAULT,
+    KEYWORD_REPLACE_TOKEN,
     SEARCH_PATTERNS,
 )
 from .db.constraint_diff import run_constraint_diff
@@ -32,6 +34,8 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["estimate_time"] = estimate_time
 templates.env.globals["now"] = time.time
 templates.env.globals["SEARCH_PATTERNS"] = SEARCH_PATTERNS
+templates.env.globals["KEYWORD_REPLACE_DEFAULT"] = KEYWORD_REPLACE_DEFAULT
+templates.env.globals["KEYWORD_REPLACE_TOKEN"] = KEYWORD_REPLACE_TOKEN
 
 app = FastAPI(title="Odoo DB Compare")
 
@@ -350,6 +354,7 @@ def _report_dict(job) -> dict:
                 "db_label": h.db_label,
                 "match_count": h.match_count,
                 "columns": h.columns,
+                "matched": h.matched,
                 "sample_ids": h.sample_ids,
                 "query": h.query,
                 "error": h.error,
