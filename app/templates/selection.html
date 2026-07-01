@@ -41,14 +41,18 @@
         <input type="radio" name="run_mode" value="compare" class="h-4 w-4 accent-ink">
         Chỉ Compare
       </label>
-      <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body {{ '' if job.keywords else 'opacity-50' }}">
-        <input type="radio" name="run_mode" value="keyword" class="h-4 w-4 accent-ink" {{ '' if job.keywords else 'disabled' }}>
+      {% set has_terms = job.keywords or job.search_patterns %}
+      <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body {{ '' if has_terms else 'opacity-50' }}">
+        <input type="radio" name="run_mode" value="keyword" class="h-4 w-4 accent-ink" {{ '' if has_terms else 'disabled' }}>
         Chỉ Tìm từ khóa
       </label>
-      {% if job.keywords %}
-      <span class="text-xs text-muted">Từ khóa ({{ job.keywords|length }}): <span class="mono text-ink">{{ job.keywords | join('; ') }}</span></span>
+      {% if has_terms %}
+      <span class="text-xs text-muted">
+        {% if job.keywords %}Từ khóa ({{ job.keywords|length }}): <span class="mono text-ink">{{ job.keywords | join('; ') }}</span>{% endif %}
+        {% if job.search_patterns %}<span class="ml-2">Mẫu: <span class="mono text-ink">{{ job.search_patterns | join(', ') }}</span></span>{% endif %}
+      </span>
       {% else %}
-      <span class="text-xs text-mustard">Chưa nhập từ khóa ở bước Config → chỉ compare được.</span>
+      <span class="text-xs text-mustard">Chưa nhập từ khóa / bật mẫu ở bước Config → chỉ compare được.</span>
       {% endif %}
     </div>
   </div>

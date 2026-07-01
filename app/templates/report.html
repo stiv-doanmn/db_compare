@@ -29,16 +29,17 @@
   <div class="stat-card"><div class="label-xs">Total</div><div class="stat-num text-ink">{{ c.total }}</div></div>
 </div>
 
-{% if job.keywords and job.run_mode in ('both', 'keyword') %}
+{% if (job.keywords or job.search_patterns) and job.run_mode in ('both', 'keyword') %}
 <div class="card overflow-hidden mb-8">
   <div class="border-b border-hairline px-5 py-4">
     <div class="flex flex-wrap items-center gap-2">
-      <span class="label-xs">Tìm kiếm từ khóa</span>
-      <span class="text-xs text-muted">dò trong cột text của <span class="mono text-ink">{{ job.label_b }}</span> · ILIKE</span>
+      <span class="label-xs">Tìm kiếm từ khóa / mẫu</span>
+      <span class="text-xs text-muted">dò trong cột text của <span class="mono text-ink">{{ job.label_b }}</span> · keyword ILIKE · mẫu regex</span>
       <span class="ml-auto text-xs mono text-muted">{{ job.keyword_hits | selectattr('error', 'equalto', '') | list | length }} hit</span>
     </div>
     <div class="mt-2 flex flex-wrap gap-1.5">
       {% for kw in job.keywords %}<span class="tag tag-ink mono">{{ kw }}</span>{% endfor %}
+      {% for pk in job.search_patterns %}<span class="tag tag-warn mono">{{ pk }}</span>{% endfor %}
     </div>
   </div>
   {% if job.keyword_hits %}
@@ -46,7 +47,7 @@
     <table class="w-full border-collapse">
       <thead>
         <tr>
-          <th class="th">Từ khóa</th><th class="th">Bảng</th>
+          <th class="th">Loại</th><th class="th">Từ khóa / Mẫu</th><th class="th">Bảng</th>
           <th class="th text-right">Số dòng khớp</th><th class="th">Cột đã tìm</th>
           <th class="th">id mẫu</th><th class="th">Query</th>
         </tr>
@@ -54,15 +55,21 @@
       <tbody>
         {% for h in job.keyword_hits %}
         <tr class="rowx">
+          <td class="td"><span class="tag {{ 'tag-warn' if h.kind == 'pattern' else 'tag-muted' }}">{{ 'mẫu' if h.kind == 'pattern' else 'từ khóa' }}</span></td>
           <td class="td mono font-medium {{ 'text-coral' if h.error else 'text-ink' }}">{{ h.keyword }}</td>
           <td class="td mono text-body">{{ h.table }}</td>
           {% if h.error %}
           <td class="td text-coral" colspan="4">Lỗi: {{ h.error }}</td>
           {% else %}
           <td class="td text-right mono tabular-nums text-mustard">{{ "{:,}".format(h.match_count) }}</td>
-          <td class="td mono text-muted break-all" style="max-width:260px">{{ h.columns | join(', ') }}</td>
-          <td class="td mono text-body break-all" style="max-width:220px">{{ h.sample_ids | join(', ') }}{% if h.has_id and h.match_count > h.sample_ids|length %} …{% elif not h.has_id %}<span class="text-muted">(không có id)</span>{% endif %}</td>
-          <td class="td mono text-info break-all" style="max-width:360px">{{ h.query }}</td>
+          <td class="td mono text-muted break-all" style="max-width:240px">{{ h.columns | join(', ') }}</td>
+          <td class="td mono text-body break-all" style="max-width:200px">{{ h.sample_ids | join(', ') }}{% if h.has_id and h.match_count > h.sample_ids|length %} …{% elif not h.has_id %}<span class="text-muted">(không có id)</span>{% endif %}</td>
+          <td class="td">
+            <div class="flex items-start gap-1.5">
+              <button type="button" class="kw-copy shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 text-[11px] text-body hover:bg-surface-soft" data-query="{{ h.query|e }}" title="Copy query">Copy</button>
+              <code class="mono text-info break-all" style="max-width:320px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ h.query }}</code>
+            </div>
+          </td>
           {% endif %}
         </tr>
         {% endfor %}
@@ -70,7 +77,7 @@
     </table>
   </div>
   {% else %}
-  <div class="px-5 py-4 text-sm text-success">Không tìm thấy dữ liệu chứa từ khóa nào trong các bảng đã so sánh.</div>
+  <div class="px-5 py-4 text-sm text-success">Không tìm thấy dữ liệu khớp từ khóa/mẫu nào trong các bảng đã so sánh.</div>
   {% endif %}
 </div>
 {% endif %}
@@ -310,6 +317,33 @@
       document.querySelectorAll('#summary-rows > tr').forEach(tr => {
         tr.style.display = match(tr) ? '' : 'none';
       });
+    });
+  })();
+
+  // ----- copy query -----
+  (function () {
+    async function copy(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {
+        // Fallback khi không có clipboard API (http/không secure context).
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) {}
+        ta.remove();
+        return ok;
+      }
+    }
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.kw-copy');
+      if (!btn) return;
+      const ok = await copy(btn.dataset.query || '');
+      const old = btn.textContent;
+      btn.textContent = ok ? 'Đã copy ✓' : 'Lỗi';
+      setTimeout(() => { btn.textContent = old; }, 1200);
     });
   })();
 </script>

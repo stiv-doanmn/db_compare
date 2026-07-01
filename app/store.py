@@ -74,6 +74,7 @@ def save_connections(
     dsn_b: Any,
     prefixes: list[str],
     keywords: list[str] | None = None,
+    search_patterns: list[str] | None = None,
 ) -> None:
     """Lưu thông tin kết nối gần nhất để lần sau prefill form (bỏ password)."""
     with _lock:
@@ -95,6 +96,7 @@ def save_connections(
             },
             "prefixes": list(prefixes),
             "keywords": list(keywords or []),
+            "search_patterns": list(search_patterns or []),
             "updated_at": time.time(),
         }
         _write(data)

@@ -34,9 +34,25 @@ MISMATCH_DETAIL_BATCH: int = _int("MISMATCH_DETAIL_BATCH", 1_000)
 # Số bản ghi giữ trong RAM làm PREVIEW cho HTML/progress (full nằm ở spill file).
 PREVIEW_SAMPLES: int = _int("PREVIEW_SAMPLES", 100)
 
-# Số id mẫu tối đa lấy cho mỗi keyword-hit (báo cáo tìm từ khóa). Chỉ để tham
-# khảo; số dòng khớp thật (match_count) luôn đếm đủ bằng COUNT(*).
+# Số id mẫu tối đa NẠP để hiển thị peek trong cell (chỉ để xem nhanh). Câu query
+# xuất ra KHÔNG bị LIMIT — copy chạy lại lấy đủ toàn bộ dòng khớp.
 KEYWORD_SAMPLE_IDS: int = _int("KEYWORD_SAMPLE_IDS", 50)
+
+# Bộ dò theo mẫu (regex Postgres ARE, so bằng ~* — không phân biệt hoa/thường).
+# Người dùng bật/tắt ở bước Config, chạy song song với keyword tự nhập.
+SEARCH_PATTERNS: list[dict] = [
+    {"key": "email", "label": "Email", "desc": "Địa chỉ email",
+     "regex": r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"},
+    {"key": "link", "label": "Link (URL)", "desc": "http:// hoặc https://",
+     "regex": r"https?://[^[:space:]]+"},
+    {"key": "domain", "label": "Domain", "desc": "Tên miền, vd example.com",
+     "regex": r"[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"},
+    {"key": "ip", "label": "IP (IPv4)", "desc": "Địa chỉ IPv4",
+     "regex": r"([0-9]{1,3}\.){3}[0-9]{1,3}"},
+    {"key": "phone", "label": "Số điện thoại", "desc": "Chuỗi ≥8 chữ số (có thể có +, -, khoảng trắng)",
+     "regex": r"(\+?[0-9][0-9 .-]{7,}[0-9])"},
+]
+SEARCH_PATTERN_MAP: dict[str, dict] = {p["key"]: p for p in SEARCH_PATTERNS}
 
 # asyncpg pool size cho mỗi DB.
 POOL_MIN_SIZE: int = _int("POOL_MIN_SIZE", 1)

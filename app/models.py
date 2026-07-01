@@ -103,6 +103,7 @@ class KeywordHit:
     keyword: str
     table: str
     db_label: str
+    kind: str = "keyword"  # keyword (tự nhập) | pattern (email/link/domain…)
     match_count: int = 0
     columns: list[str] = field(default_factory=list)  # các cột text đã tìm
     sample_ids: list[Any] = field(default_factory=list)
@@ -199,6 +200,8 @@ class JobState:
     prefixes: list[str] = field(default_factory=list)
     # Cụm từ khóa cần tìm trong dữ liệu (nhập ở bước Config, ngăn cách bằng ';').
     keywords: list[str] = field(default_factory=list)
+    # Các bộ dò theo mẫu được bật (key trong config.SEARCH_PATTERNS): email/link/…
+    search_patterns: list[str] = field(default_factory=list)
     # Kết quả tìm keyword (quét ở DB B trong lúc compare) — 1 phần tử / (keyword, bảng).
     keyword_hits: list[KeywordHit] = field(default_factory=list)
     # Chế độ chạy bước 4: both = compare + tìm từ khóa · compare · keyword.

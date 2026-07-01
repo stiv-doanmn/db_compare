@@ -452,34 +452,52 @@ def _sql_literal(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
 
 
-async def _search_keywords(job: JobState, table: str) -> None:
-    """Dò từng keyword trong các cột text của `table` ở DB B; ghi kết quả vào
-    job.keyword_hits. Mỗi keyword khớp ≥1 dòng → 1 KeywordHit (kèm câu query).
-
-    Chạy độc lập với diff A↔B: chỉ cần liệt kê dữ liệu ở B chứa cụm từ cần tìm.
-    Lỗi ở 1 bảng không làm hỏng cả compare — ghi lại thành 1 hit lỗi.
+def _search_terms(job: JobState) -> list[tuple[str, str, str, str]]:
+    """Danh sách (label, kind, operator, pattern) cần dò:
+    - keyword tự nhập → ILIKE '%kw%'
+    - bộ dò theo mẫu (config.SEARCH_PATTERNS) → ~* regex
     """
-    if not job.keywords:
+    from ..config import SEARCH_PATTERN_MAP
+
+    terms: list[tuple[str, str, str, str]] = []
+    for kw in job.keywords:
+        terms.append((kw, "keyword", "ILIKE", f"%{kw}%"))
+    for key in job.search_patterns:
+        p = SEARCH_PATTERN_MAP.get(key)
+        if p:
+            terms.append((p["label"], "pattern", "~*", p["regex"]))
+    return terms
+
+
+async def _search_keywords(job: JobState, table: str) -> None:
+    """Dò từng term (keyword + mẫu) trong các cột text của `table` ở DB B; ghi
+    kết quả vào job.keyword_hits. Mỗi term khớp ≥1 dòng → 1 KeywordHit.
+
+    Chạy độc lập với diff A↔B: chỉ liệt kê dữ liệu ở B khớp term cần tìm.
+    Câu query lưu KHÔNG có LIMIT → copy chạy lại lấy đủ toàn bộ dòng khớp.
+    Lỗi ở 1 bảng/term không làm hỏng cả compare — ghi lại thành 1 hit lỗi.
+    """
+    terms = _search_terms(job)
+    if not terms:
         return
     pool = job.pool_b
     try:
         types = await _column_types(pool, table)
     except Exception as exc:  # noqa: BLE001
         job.keyword_hits.append(KeywordHit(
-            keyword="; ".join(job.keywords), table=table, db_label=job.label_b,
+            keyword="(tất cả)", table=table, db_label=job.label_b,
             error=f"{type(exc).__name__}: {exc}",
         ))
         return
 
     text_cols = [c for c, t in types.items() if t in _TEXT_TYPES]
     if not text_cols:
-        return  # bảng không có cột text → không thể chứa cụm từ
+        return  # bảng không có cột text → không thể chứa term
     has_id = "id" in types
     qtable = _qident(table)
-    predicate = " OR ".join(f"{_qident(c)}::text ILIKE $1" for c in text_cols)
 
-    for kw in job.keywords:
-        pattern = f"%{kw}%"
+    for (label, kind, op, pattern) in terms:
+        predicate = " OR ".join(f"{_qident(c)}::text {op} $1" for c in text_cols)
         lit = _sql_literal(pattern)
         try:
             count = await pool.fetchval(
@@ -489,23 +507,27 @@ async def _search_keywords(job: JobState, table: str) -> None:
                 continue
             sample_ids: list = []
             if has_id:
-                id_sql = (
+                # Câu query hiển thị/copy: KHÔNG LIMIT (lấy đủ). Peek id thì có
+                # LIMIT riêng để cell không phình.
+                display_query = (
+                    f"SELECT id FROM {qtable} WHERE {predicate} ORDER BY id"
+                ).replace("$1", lit)
+                rows = await pool.fetch(
                     f"SELECT id FROM {qtable} WHERE {predicate} "
-                    f"ORDER BY id LIMIT {KEYWORD_SAMPLE_IDS}"
+                    f"ORDER BY id LIMIT {KEYWORD_SAMPLE_IDS}",
+                    pattern,
                 )
-                rows = await pool.fetch(id_sql, pattern)
                 sample_ids = [r["id"] for r in rows]
-                display_query = id_sql.replace("$1", lit)
             else:
                 display_query = f"SELECT * FROM {qtable} WHERE {predicate}".replace("$1", lit)
             job.keyword_hits.append(KeywordHit(
-                keyword=kw, table=table, db_label=job.label_b,
+                keyword=label, kind=kind, table=table, db_label=job.label_b,
                 match_count=int(count), columns=list(text_cols),
                 sample_ids=sample_ids, has_id=has_id, query=display_query,
             ))
         except Exception as exc:  # noqa: BLE001
             job.keyword_hits.append(KeywordHit(
-                keyword=kw, table=table, db_label=job.label_b,
+                keyword=label, kind=kind, table=table, db_label=job.label_b,
                 query=f"SELECT ... FROM {qtable} WHERE {predicate}".replace("$1", lit),
                 error=f"{type(exc).__name__}: {exc}",
             ))
@@ -531,7 +553,7 @@ async def run_compare(job: JobState) -> None:
     job.keyword_scanned_tables = 0
 
     do_compare = job.run_mode in ("both", "compare")
-    do_keyword = job.run_mode in ("both", "keyword") and bool(job.keywords)
+    do_keyword = job.run_mode in ("both", "keyword") and bool(job.keywords or job.search_patterns)
     job.keyword_total_tables = len(job.progress) if do_keyword else 0
 
     # Dọn spill rác của các bảng không còn được chọn (giữ bảng đang chọn → an

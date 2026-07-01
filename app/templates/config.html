@@ -66,6 +66,20 @@
     <label class="label-xs">Cụm từ khóa tìm kiếm</label>
     <p class="mb-3 mt-1 text-xs text-body">Khi compare data sẽ dò các cụm từ này trong cột kiểu text của <span class="tag tag-ink">{{ job.label_b }}</span> (không phân biệt hoa/thường) và xuất riêng 1 sheet <span class="mono text-ink">Tìm kiếm từ khóa</span>. Phân tách bằng dấu <span class="mono text-ink">;</span></p>
     <input name="keywords" value="{{ job.keywords | join('; ') }}" class="input mono" placeholder="astralink; nev_; api_key; token" />
+
+    <div class="mt-4 border-t border-hairline pt-4">
+      <label class="label-xs">Bộ dò theo mẫu</label>
+      <p class="mb-3 mt-1 text-xs text-body">Ngoài keyword tự nhập, tick thêm để dò các mẫu phổ biến (regex, không phân biệt hoa/thường).</p>
+      <div class="flex flex-wrap gap-x-5 gap-y-2.5">
+        {% for pat in SEARCH_PATTERNS %}
+        <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body" title="{{ pat.desc }}">
+          <input type="checkbox" name="patterns" value="{{ pat.key }}" class="h-4 w-4 rounded-sm border-hairline accent-ink"
+                 {{ 'checked' if pat.key in job.search_patterns else '' }}>
+          {{ pat.label }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
   <div class="mt-6">

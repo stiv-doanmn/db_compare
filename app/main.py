@@ -12,7 +12,12 @@ from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
 from . import spill, store
-from .config import DEFAULT_LABEL_A, DEFAULT_LABEL_B, DEFAULT_PREFIXES
+from .config import (
+    DEFAULT_LABEL_A,
+    DEFAULT_LABEL_B,
+    DEFAULT_PREFIXES,
+    SEARCH_PATTERNS,
+)
 from .db.constraint_diff import run_constraint_diff
 from .db.data_compare import run_compare
 from .db.estimator import build_estimates, estimate_time
@@ -26,6 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["estimate_time"] = estimate_time
 templates.env.globals["now"] = time.time
+templates.env.globals["SEARCH_PATTERNS"] = SEARCH_PATTERNS
 
 app = FastAPI(title="Odoo DB Compare")
 
@@ -62,6 +68,7 @@ async def index():
         job.dsn_a = DSNConfig(ca["host"], ca["port"], ca["dbname"], ca["user"], "")
         job.dsn_b = DSNConfig(cb["host"], cb["port"], cb["dbname"], cb["user"], "")
         job.keywords = saved.get("keywords") or job.keywords
+        job.search_patterns = saved.get("search_patterns") or job.search_patterns
     return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
 
@@ -93,6 +100,7 @@ async def connect(
     b_password: str = Form(""),
     prefixes: str = Form(""),
     keywords: str = Form(""),
+    patterns: list[str] = Form(default=[]),
 ):
     job = manager.get(job_id)
     if job is None:
@@ -102,6 +110,10 @@ async def connect(
     job.prefixes = [p.strip() for p in prefixes.split(",") if p.strip()]
     # Cụm từ khóa ngăn cách bằng ';' — bỏ khoảng trắng thừa và mục rỗng.
     job.keywords = [k.strip() for k in keywords.split(";") if k.strip()]
+    # Bộ dò theo mẫu — chỉ giữ key hợp lệ, đúng thứ tự khai báo trong config.
+    from .config import SEARCH_PATTERNS
+    chosen = set(patterns)
+    job.search_patterns = [p["key"] for p in SEARCH_PATTERNS if p["key"] in chosen]
     job.dsn_a = DSNConfig(a_host, a_port, a_dbname, a_user, a_password)
     job.dsn_b = DSNConfig(b_host, b_port, b_dbname, b_user, b_password)
 
@@ -109,7 +121,7 @@ async def connect(
     store.save_connections(
         label_a=job.label_a, label_b=job.label_b,
         dsn_a=job.dsn_a, dsn_b=job.dsn_b, prefixes=job.prefixes,
-        keywords=job.keywords,
+        keywords=job.keywords, search_patterns=job.search_patterns,
     )
 
     # Đóng pool cũ nếu test lại
@@ -243,7 +255,7 @@ def _progress_snapshot(job) -> dict:
         "counters": job.counters(),
         "run_mode": job.run_mode,
         "keyword": {
-            "enabled": job.run_mode in ("both", "keyword") and bool(job.keywords),
+            "enabled": job.run_mode in ("both", "keyword") and bool(job.keywords or job.search_patterns),
             "matches": job.keyword_match_total,
             "tables": job.keyword_hit_tables,
             "scanned": job.keyword_scanned_tables,
@@ -329,9 +341,11 @@ def _report_dict(job) -> dict:
         "version_b": job.version_b,
         "counters": job.counters(),
         "keywords": job.keywords,
+        "search_patterns": job.search_patterns,
         "keyword_hits": [
             {
                 "keyword": h.keyword,
+                "kind": h.kind,
                 "table": h.table,
                 "db_label": h.db_label,
                 "match_count": h.match_count,
