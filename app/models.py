@@ -94,6 +94,24 @@ class TableSchemaDiff:
 
 
 @dataclass
+class KeywordHit:
+    """1 dòng kết quả tìm từ khóa: 1 keyword khớp trong 1 bảng (ở DB B).
+
+    query giữ nguyên câu SQL re-runnable (đã nhúng literal pattern) để dán chạy
+    lại thủ công. error khác rỗng → dòng này là lỗi khi quét bảng đó.
+    """
+    keyword: str
+    table: str
+    db_label: str
+    match_count: int = 0
+    columns: list[str] = field(default_factory=list)  # các cột text đã tìm
+    sample_ids: list[Any] = field(default_factory=list)
+    has_id: bool = False
+    query: str = ""
+    error: str = ""
+
+
+@dataclass
 class TableEstimate:
     name: str
     rows_a: int = 0
@@ -179,6 +197,15 @@ class JobState:
     error_b: str = ""
 
     prefixes: list[str] = field(default_factory=list)
+    # Cụm từ khóa cần tìm trong dữ liệu (nhập ở bước Config, ngăn cách bằng ';').
+    keywords: list[str] = field(default_factory=list)
+    # Kết quả tìm keyword (quét ở DB B trong lúc compare) — 1 phần tử / (keyword, bảng).
+    keyword_hits: list[KeywordHit] = field(default_factory=list)
+    # Chế độ chạy bước 4: both = compare + tìm từ khóa · compare · keyword.
+    run_mode: str = "both"
+    keyword_running: bool = False
+    keyword_scanned_tables: int = 0
+    keyword_total_tables: int = 0
 
     # Phase 1
     schema_tables: dict[str, TableSchemaDiff] = field(default_factory=dict)
@@ -205,6 +232,17 @@ class JobState:
 
     def is_custom(self, table: str) -> bool:
         return any(table.startswith(p) for p in self.prefixes)
+
+    # --- keyword search counters ---
+    @property
+    def keyword_match_total(self) -> int:
+        """Tổng số DÒNG (bản ghi) khớp từ khóa, cộng dồn mọi (keyword, bảng)."""
+        return sum(h.match_count for h in self.keyword_hits if not h.error)
+
+    @property
+    def keyword_hit_tables(self) -> int:
+        """Số bảng có ≥1 dòng khớp từ khóa."""
+        return len({h.table for h in self.keyword_hits if not h.error and h.match_count})
 
     # --- counters cho màn progress / report ---
     def counters(self) -> dict[str, int]:

@@ -23,6 +23,26 @@
   <div class="stat-card"><div class="label-xs">Running</div><div class="stat-num text-info" id="count-running">0</div></div>
 </div>
 
+<!-- Card đếm số bản ghi khớp từ khóa (ẩn nếu chế độ không tìm từ khóa) -->
+<div id="kw-card" class="card mb-6 hidden overflow-hidden">
+  <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-4">
+    <div>
+      <div class="label-xs">Bản ghi khớp từ khóa <span class="normal-case text-muted">(ở {{ job.label_b }})</span></div>
+      <div class="mt-0.5 flex items-baseline gap-2">
+        <span id="kw-matches" class="mono text-[26px] font-normal tabular-nums text-mustard">0</span>
+        <span id="kw-tables" class="text-xs text-muted">0 bảng</span>
+      </div>
+    </div>
+    <div class="ml-auto flex items-center gap-2 text-xs">
+      <span id="kw-spin" class="spinner hidden"></span>
+      <span id="kw-state" class="mono text-muted">chờ compare…</span>
+    </div>
+  </div>
+  <div class="h-1.5 w-full bg-surface-strong">
+    <div id="kw-bar" class="h-full rounded-full bg-mustard transition-all duration-300" style="width:0%"></div>
+  </div>
+</div>
+
 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
   <div class="flex flex-wrap gap-2" id="status-filter">
     <button class="chip is-active" data-status="all">All <span class="opacity-60" data-count="all">0</span></button>
@@ -80,7 +100,7 @@
   // theo từng snapshot (sẽ nhảy loạn vì snapshot về ~4 lần/giây).
   let startEpoch = null;
   const nowSec = () => Date.now() / 1000;
-  setInterval(() => {
+  const timerTick = setInterval(() => {
     if (running && startEpoch !== null) {
       elapsed = nowSec() - startEpoch;
       timerEl.textContent = fmt(elapsed);
@@ -200,14 +220,37 @@
     s.tables.forEach(patchRow);
     reorder();      // chưa xong nổi lên trên
     applyFilter();
+    renderKeyword(s.keyword);
     if (!running) {
       elapsed = s.elapsed;                 // chốt số cuối từ server
       timerEl.textContent = fmt(elapsed);
+      clearInterval(timerTick);            // dừng hẳn đồng hồ khi job xong
       const cta = document.getElementById('done-cta');
       document.getElementById('report-link').href = s.report_url;
       cta.classList.remove('hidden'); cta.classList.add('flex');
     } else {
       timerEl.textContent = fmt(elapsed);  // vẽ ngay, interval lo phần còn lại
+    }
+  }
+
+  // ----- keyword match card -----
+  const kwCard = document.getElementById('kw-card');
+  function renderKeyword(k) {
+    if (!k || !k.enabled) { kwCard.classList.add('hidden'); return; }
+    kwCard.classList.remove('hidden');
+    document.getElementById('kw-matches').textContent = (k.matches || 0).toLocaleString();
+    document.getElementById('kw-tables').textContent = (k.tables || 0) + ' bảng';
+    const total = k.total || 0, scanned = k.scanned || 0;
+    const pct = total ? Math.round(scanned * 100 / total) : (running ? 0 : 100);
+    document.getElementById('kw-bar').style.width = pct + '%';
+    const spin = document.getElementById('kw-spin');
+    const state = document.getElementById('kw-state');
+    if (k.running) {
+      spin.classList.remove('hidden');
+      state.textContent = `đang tìm ${scanned}/${total} bảng…`;
+    } else {
+      spin.classList.add('hidden');
+      state.textContent = running ? 'chờ compare…' : `xong · quét ${scanned}/${total} bảng`;
     }
   }
 

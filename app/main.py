@@ -61,6 +61,7 @@ async def index():
         job.prefixes = saved.get("prefixes") or job.prefixes
         job.dsn_a = DSNConfig(ca["host"], ca["port"], ca["dbname"], ca["user"], "")
         job.dsn_b = DSNConfig(cb["host"], cb["port"], cb["dbname"], cb["user"], "")
+        job.keywords = saved.get("keywords") or job.keywords
     return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
 
@@ -91,6 +92,7 @@ async def connect(
     b_user: str = Form(...),
     b_password: str = Form(""),
     prefixes: str = Form(""),
+    keywords: str = Form(""),
 ):
     job = manager.get(job_id)
     if job is None:
@@ -98,6 +100,8 @@ async def connect(
 
     job.label_a, job.label_b = label_a.strip() or "DB A", label_b.strip() or "DB B"
     job.prefixes = [p.strip() for p in prefixes.split(",") if p.strip()]
+    # Cụm từ khóa ngăn cách bằng ';' — bỏ khoảng trắng thừa và mục rỗng.
+    job.keywords = [k.strip() for k in keywords.split(";") if k.strip()]
     job.dsn_a = DSNConfig(a_host, a_port, a_dbname, a_user, a_password)
     job.dsn_b = DSNConfig(b_host, b_port, b_dbname, b_user, b_password)
 
@@ -105,6 +109,7 @@ async def connect(
     store.save_connections(
         label_a=job.label_a, label_b=job.label_b,
         dsn_a=job.dsn_a, dsn_b=job.dsn_b, prefixes=job.prefixes,
+        keywords=job.keywords,
     )
 
     # Đóng pool cũ nếu test lại
@@ -190,6 +195,9 @@ async def compare(request: Request, job_id: str):
 
     form = await request.form()
     selected = form.getlist("select")
+    # Chế độ chạy: both (compare + tìm từ khóa) | compare | keyword.
+    run_mode = form.get("run_mode", "both")
+    job.run_mode = run_mode if run_mode in ("both", "compare", "keyword") else "both"
     job.selection = {}
     job.progress = {}
     job.queue = asyncio.Queue()
@@ -233,6 +241,15 @@ def _progress_snapshot(job) -> dict:
         "running": running,
         "elapsed": round(elapsed, 1),
         "counters": job.counters(),
+        "run_mode": job.run_mode,
+        "keyword": {
+            "enabled": job.run_mode in ("both", "keyword") and bool(job.keywords),
+            "matches": job.keyword_match_total,
+            "tables": job.keyword_hit_tables,
+            "scanned": job.keyword_scanned_tables,
+            "total": job.keyword_total_tables,
+            "running": job.keyword_running,
+        },
         "report_url": f"/jobs/{job.id}/report",
         "tables": [
             {
@@ -311,6 +328,20 @@ def _report_dict(job) -> dict:
         "version_a": job.version_a,
         "version_b": job.version_b,
         "counters": job.counters(),
+        "keywords": job.keywords,
+        "keyword_hits": [
+            {
+                "keyword": h.keyword,
+                "table": h.table,
+                "db_label": h.db_label,
+                "match_count": h.match_count,
+                "columns": h.columns,
+                "sample_ids": h.sample_ids,
+                "query": h.query,
+                "error": h.error,
+            }
+            for h in job.keyword_hits
+        ],
         "tables": [
             {
                 "name": p.name,

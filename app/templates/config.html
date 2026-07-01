@@ -62,6 +62,12 @@
     <input name="prefixes" value="{{ job.prefixes | join(', ') }}" class="input mono" placeholder="nev_, astra_, sh_, helpdesk_, audit" />
   </div>
 
+  <div class="card mt-5 p-6">
+    <label class="label-xs">Cụm từ khóa tìm kiếm</label>
+    <p class="mb-3 mt-1 text-xs text-body">Khi compare data sẽ dò các cụm từ này trong cột kiểu text của <span class="tag tag-ink">{{ job.label_b }}</span> (không phân biệt hoa/thường) và xuất riêng 1 sheet <span class="mono text-ink">Tìm kiếm từ khóa</span>. Phân tách bằng dấu <span class="mono text-ink">;</span></p>
+    <input name="keywords" value="{{ job.keywords | join('; ') }}" class="input mono" placeholder="astralink; nev_; api_key; token" />
+  </div>
+
   <div class="mt-6">
     <button type="submit" class="btn btn-primary btn-sm">
       <span id="connect-spin" class="spinner htmx-indicator"></span>

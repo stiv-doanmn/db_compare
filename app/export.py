@@ -52,6 +52,7 @@ _FILL_BACK = PatternFill("solid", fgColor="F4D35E")  # nút back nổi bật
 
 _SUMMARY_TITLE = "Tổng quan"
 _CONSTRAINT_TITLE = "Constraint Summary"
+_KEYWORD_TITLE = "Tìm kiếm từ khóa"
 _UNSET = object()  # sentinel cho group-id ban đầu (sọc màu record diff)
 
 _thin = Side(style="thin", color=_GREY_LINE)
@@ -262,6 +263,80 @@ def _build_constraint_summary(ws: Worksheet, job) -> None:
     ws.freeze_panes = ws.cell(row=hr + 1, column=1)
     if no > 1:
         ws.auto_filter.ref = f"A{hr}:N{r - 1}"
+
+
+# --------------------------------------------------------------------------- #
+# Excel — sheet kết quả tìm cụm từ khóa (dò ở DB B)
+# --------------------------------------------------------------------------- #
+_KEYWORD_HEAD = [
+    "No.", "Từ khóa", "Bảng", "Database", "Số dòng khớp",
+    "Cột đã tìm", "id mẫu", "Câu query",
+]
+
+
+def _fmt_cols_list(cols: list[str], limit: int = 12) -> str:
+    if not cols:
+        return ""
+    if len(cols) <= limit:
+        return ", ".join(cols)
+    return ", ".join(cols[:limit]) + f" … (+{len(cols) - limit} cột)"
+
+
+def _build_keyword_search(ws: Worksheet, job) -> None:
+    ws.sheet_view.showGridLines = False
+    ws["A1"] = "KẾT QUẢ TÌM CỤM TỪ KHÓA"
+    ws["A1"].font = _FONT_TITLE
+    ws["A2"] = (
+        f"Dò trong cột kiểu text của {job.label_b} · không phân biệt hoa/thường (ILIKE)"
+    )
+    ws["A2"].font = _FONT_MUTED
+    ws["A3"] = "Từ khóa: " + ("  ·  ".join(job.keywords) if job.keywords else "(không có)")
+    ws["A3"].font = _FONT_BOLD
+
+    hr = 5
+    _header_row(ws, hr, _KEYWORD_HEAD)
+
+    r = hr + 1
+    no = 1
+    for h in job.keyword_hits:
+        if h.error:
+            ws.cell(row=r, column=1, value=no)
+            ws.cell(row=r, column=2, value=h.keyword)
+            ws.cell(row=r, column=3, value=h.table)
+            ws.cell(row=r, column=4, value=h.db_label)
+            ecell = ws.cell(row=r, column=5, value="lỗi")
+            ecell.font = _FONT_ERR
+            ws.cell(row=r, column=8, value=(h.query or "") + f"  — {h.error}")
+        else:
+            ws.cell(row=r, column=1, value=no)
+            ws.cell(row=r, column=2, value=h.keyword).font = _FONT_BOLD
+            ws.cell(row=r, column=3, value=h.table)
+            ws.cell(row=r, column=4, value=h.db_label)
+            mc = ws.cell(row=r, column=5, value=h.match_count)
+            mc.alignment = _RIGHT
+            mc.font = _FONT_WARN
+            ws.cell(row=r, column=6, value=_fmt_cols_list(h.columns)).alignment = _LEFT
+            ids = ", ".join(str(i) for i in h.sample_ids)
+            if h.has_id and h.match_count > len(h.sample_ids):
+                ids += " …"
+            ws.cell(row=r, column=7, value=ids or ("(bảng không có id)" if not h.has_id else "")).alignment = _LEFT
+            ws.cell(row=r, column=8, value=h.query).alignment = _LEFT
+        for col in range(1, 9):
+            ws.cell(row=r, column=col).border = _BORDER
+        r += 1
+        no += 1
+
+    if no == 1:
+        msg = ("Không tìm thấy dữ liệu chứa từ khóa nào."
+               if job.keywords else "Chưa nhập từ khóa ở bước Config.")
+        ws.cell(row=r, column=1, value=msg).font = _FONT_OK
+
+    widths = [6, 24, 34, 14, 14, 46, 40, 80]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = ws.cell(row=hr + 1, column=1)
+    if no > 1:
+        ws.auto_filter.ref = f"A{hr}:H{r - 1}"
 
 
 # --------------------------------------------------------------------------- #
@@ -481,6 +556,10 @@ def build_workbook_zip(job) -> bytes:
             used.add(_SUMMARY_TITLE.lower())
             cs_ws = wb.create_sheet(_safe_sheet_title(_CONSTRAINT_TITLE, used))
             _build_constraint_summary(cs_ws, job)
+            # Sheet tìm từ khóa — chỉ khi thực sự có chạy tìm (mode both/keyword).
+            if getattr(job, "keywords", None) and getattr(job, "run_mode", "both") in ("both", "keyword"):
+                ks_ws = wb.create_sheet(_safe_sheet_title(_KEYWORD_TITLE, used))
+                _build_keyword_search(ks_ws, job)
 
         titles: dict = {}  # table -> sheet title (chỉ sheet đầu, trong file này)
         for (p, idx, total, clen) in part:
@@ -524,6 +603,18 @@ def build_csv(job) -> str:
         "id_or_key", "column", f"value_{job.label_a}", f"value_{job.label_b}",
         "detail",
     ])
+    # Kết quả tìm từ khóa (dò ở DB B) — ghi lên đầu file cho dễ thấy.
+    for h in getattr(job, "keyword_hits", []) or []:
+        detail = h.query
+        if h.error:
+            detail = (detail + " | " if detail else "") + f"error={h.error}"
+        w.writerow([
+            h.table, "", "keyword_search",
+            f"keyword: {h.keyword}",
+            ", ".join(str(i) for i in h.sample_ids),
+            _fmt_cols_list(h.columns),
+            "", h.match_count, detail,
+        ])
     for p in job.progress.values():
         w.writerow([
             p.name, p.mode, p.status, "summary", "", "", p.count_a, p.count_b,

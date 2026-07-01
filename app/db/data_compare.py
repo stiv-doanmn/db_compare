@@ -21,11 +21,12 @@ import asyncpg
 from .. import spill
 from ..config import (
     BATCH_SIZE,
+    KEYWORD_SAMPLE_IDS,
     MAX_MISMATCH_DETAIL,
     MISMATCH_DETAIL_BATCH,
     PREVIEW_SAMPLES,
 )
-from ..models import JobState, TableProgress
+from ..models import JobState, KeywordHit, TableProgress
 from ..store import clear_checkpoint, load_checkpoint, save_checkpoint
 
 _PROGRESS_TICK = 5000  # số row giữa mỗi lần đẩy cập nhật progress
@@ -436,6 +437,80 @@ async def _fetch_mismatch_details(
     prog.mismatch_row_count = counters["rows"]
 
 
+# --------------------------------------------------------------------------- #
+# Tìm cụm từ khóa trong dữ liệu (chỉ DB B, chỉ cột kiểu text)
+# --------------------------------------------------------------------------- #
+# Các data_type (information_schema) coi là "text" để dò ILIKE.
+_TEXT_TYPES = {
+    "character varying", "varchar", "text", "character", "char",
+    "citext", "name", "json", "jsonb",
+}
+
+
+def _sql_literal(s: str) -> str:
+    """Chuỗi literal SQL an toàn để NHÚNG vào câu query hiển thị (re-runnable)."""
+    return "'" + s.replace("'", "''") + "'"
+
+
+async def _search_keywords(job: JobState, table: str) -> None:
+    """Dò từng keyword trong các cột text của `table` ở DB B; ghi kết quả vào
+    job.keyword_hits. Mỗi keyword khớp ≥1 dòng → 1 KeywordHit (kèm câu query).
+
+    Chạy độc lập với diff A↔B: chỉ cần liệt kê dữ liệu ở B chứa cụm từ cần tìm.
+    Lỗi ở 1 bảng không làm hỏng cả compare — ghi lại thành 1 hit lỗi.
+    """
+    if not job.keywords:
+        return
+    pool = job.pool_b
+    try:
+        types = await _column_types(pool, table)
+    except Exception as exc:  # noqa: BLE001
+        job.keyword_hits.append(KeywordHit(
+            keyword="; ".join(job.keywords), table=table, db_label=job.label_b,
+            error=f"{type(exc).__name__}: {exc}",
+        ))
+        return
+
+    text_cols = [c for c, t in types.items() if t in _TEXT_TYPES]
+    if not text_cols:
+        return  # bảng không có cột text → không thể chứa cụm từ
+    has_id = "id" in types
+    qtable = _qident(table)
+    predicate = " OR ".join(f"{_qident(c)}::text ILIKE $1" for c in text_cols)
+
+    for kw in job.keywords:
+        pattern = f"%{kw}%"
+        lit = _sql_literal(pattern)
+        try:
+            count = await pool.fetchval(
+                f"SELECT count(*) FROM {qtable} WHERE {predicate}", pattern
+            )
+            if not count:
+                continue
+            sample_ids: list = []
+            if has_id:
+                id_sql = (
+                    f"SELECT id FROM {qtable} WHERE {predicate} "
+                    f"ORDER BY id LIMIT {KEYWORD_SAMPLE_IDS}"
+                )
+                rows = await pool.fetch(id_sql, pattern)
+                sample_ids = [r["id"] for r in rows]
+                display_query = id_sql.replace("$1", lit)
+            else:
+                display_query = f"SELECT * FROM {qtable} WHERE {predicate}".replace("$1", lit)
+            job.keyword_hits.append(KeywordHit(
+                keyword=kw, table=table, db_label=job.label_b,
+                match_count=int(count), columns=list(text_cols),
+                sample_ids=sample_ids, has_id=has_id, query=display_query,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            job.keyword_hits.append(KeywordHit(
+                keyword=kw, table=table, db_label=job.label_b,
+                query=f"SELECT ... FROM {qtable} WHERE {predicate}".replace("$1", lit),
+                error=f"{type(exc).__name__}: {exc}",
+            ))
+
+
 async def _notify(job: JobState) -> None:
     """Đánh thức SSE stream để render lại trạng thái hiện tại."""
     try:
@@ -451,18 +526,50 @@ async def run_compare(job: JobState) -> None:
     job.status = "running"
     job.compare_started_at = time.time()
     job.compare_finished_at = None
+    job.keyword_hits = []  # quét lại từ đầu mỗi lần chạy compare
+    job.keyword_running = False
+    job.keyword_scanned_tables = 0
+
+    do_compare = job.run_mode in ("both", "compare")
+    do_keyword = job.run_mode in ("both", "keyword") and bool(job.keywords)
+    job.keyword_total_tables = len(job.progress) if do_keyword else 0
+
     # Dọn spill rác của các bảng không còn được chọn (giữ bảng đang chọn → an
     # toàn cho resume). Spill của bảng đang chọn được _merge_join tự reset.
     spill.cleanup_pair(job.pair_key(), set(job.progress.keys()))
     sem = asyncio.Semaphore(MAX_WORKERS)
 
-    async def _guarded(table: str) -> None:
+    async def _compare_guarded(table: str) -> None:
         async with sem:
             await _compare_one(job, table)
 
+    async def _keyword_guarded(table: str) -> None:
+        async with sem:
+            await _search_keywords(job, table)
+            job.keyword_scanned_tables += 1
+            await _notify(job)
+
     try:
-        await asyncio.gather(*(_guarded(t) for t in job.progress))
+        # Phase compare A↔B (bỏ qua nếu chỉ tìm từ khóa).
+        if do_compare:
+            await asyncio.gather(*(_compare_guarded(t) for t in job.progress))
+        else:
+            # Keyword-only: đánh dấu bảng done ngay để bảng tiến độ hiển thị gọn,
+            # không chạy diff.
+            now = time.time()
+            for prog in job.progress.values():
+                prog.status = "done"
+                prog.started_at = prog.finished_at = now
+            await _notify(job)
+
+        # Phase tìm cụm từ khóa (chạy sau khi compare xong → tách bạch, đồng hồ
+        # phần này được phản ánh qua card "Bản ghi khớp từ khóa").
+        if do_keyword:
+            job.keyword_running = True
+            await _notify(job)
+            await asyncio.gather(*(_keyword_guarded(t) for t in job.progress))
     finally:
+        job.keyword_running = False
         job.status = "done"
         job.compare_finished_at = time.time()
         await _notify(job)

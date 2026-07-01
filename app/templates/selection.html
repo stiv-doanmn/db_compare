@@ -30,6 +30,29 @@
     <button type="button" class="chip" data-mode="count-only">Count-only</button>
   </div>
 
+  <div class="card mb-5 p-4">
+    <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <span class="label-xs">Chế độ chạy</span>
+      <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body">
+        <input type="radio" name="run_mode" value="both" class="h-4 w-4 accent-ink" checked>
+        Compare + Tìm từ khóa
+      </label>
+      <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body">
+        <input type="radio" name="run_mode" value="compare" class="h-4 w-4 accent-ink">
+        Chỉ Compare
+      </label>
+      <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-body {{ '' if job.keywords else 'opacity-50' }}">
+        <input type="radio" name="run_mode" value="keyword" class="h-4 w-4 accent-ink" {{ '' if job.keywords else 'disabled' }}>
+        Chỉ Tìm từ khóa
+      </label>
+      {% if job.keywords %}
+      <span class="text-xs text-muted">Từ khóa ({{ job.keywords|length }}): <span class="mono text-ink">{{ job.keywords | join('; ') }}</span></span>
+      {% else %}
+      <span class="text-xs text-mustard">Chưa nhập từ khóa ở bước Config → chỉ compare được.</span>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="card overflow-hidden mb-28">
     <div class="table-scroll">
       <table class="w-full border-collapse">

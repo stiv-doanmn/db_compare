@@ -34,6 +34,10 @@ MISMATCH_DETAIL_BATCH: int = _int("MISMATCH_DETAIL_BATCH", 1_000)
 # Số bản ghi giữ trong RAM làm PREVIEW cho HTML/progress (full nằm ở spill file).
 PREVIEW_SAMPLES: int = _int("PREVIEW_SAMPLES", 100)
 
+# Số id mẫu tối đa lấy cho mỗi keyword-hit (báo cáo tìm từ khóa). Chỉ để tham
+# khảo; số dòng khớp thật (match_count) luôn đếm đủ bằng COUNT(*).
+KEYWORD_SAMPLE_IDS: int = _int("KEYWORD_SAMPLE_IDS", 50)
+
 # asyncpg pool size cho mỗi DB.
 POOL_MIN_SIZE: int = _int("POOL_MIN_SIZE", 1)
 POOL_MAX_SIZE: int = _int("POOL_MAX_SIZE", 5)
